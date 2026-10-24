@@ -1,3 +1,4 @@
+import { registerWorkspaceTools } from "@/agent/tools";
 import { getServices } from "@/services";
 import { useConnectionStore } from "@/state/connectionStore";
 import { useConversationStore } from "@/state/conversationStore";
@@ -6,6 +7,7 @@ import { useSettingsStore } from "@/state/settingsStore";
 
 /** Load persisted state, then connect to Ollama. Safe to call once per launch. */
 export async function bootstrap(): Promise<void> {
+  registerWorkspaceTools(getServices().tools);
   const settings = await useSettingsStore.getState().load();
   void useProjectStore.getState().load();
 

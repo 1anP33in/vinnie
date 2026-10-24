@@ -2,6 +2,9 @@ import { create } from "zustand";
 import { toVinnieError, type VinnieError } from "@/lib/errors";
 import type { ProjectInfo } from "@/lib/ipc/types";
 import { getServices } from "@/services";
+import { useChangesStore } from "./changesStore";
+import { useEditorStore } from "./editorStore";
+import { useWorkspaceStore } from "./workspaceStore";
 
 interface ProjectState {
   project: ProjectInfo | null;
@@ -14,14 +17,27 @@ interface ProjectState {
   dismissError(): void;
 }
 
-export const useProjectStore = create<ProjectState>((set) => ({
+/** Reset workspace-dependent state when the active project changes. */
+function projectChanged(previous: ProjectInfo | null, next: ProjectInfo | null) {
+  if (previous?.path === next?.path && previous?.status === next?.status) return;
+  if (previous?.path !== next?.path) useEditorStore.getState().closeAll();
+  const available = next?.status === "available" ? next.path : null;
+  useWorkspaceStore.getState().reset(available);
+  useChangesStore.getState().reset();
+  if (available) void useChangesStore.getState().refresh();
+}
+
+export const useProjectStore = create<ProjectState>((set, get) => ({
   project: null,
   busy: false,
   error: null,
 
   async load() {
     try {
-      set({ project: await getServices().project.getActive(), error: null });
+      const previous = get().project;
+      const project = await getServices().project.getActive();
+      set({ project, error: null });
+      projectChanged(previous, project);
     } catch (err) {
       set({ error: toVinnieError(err) });
     }
@@ -30,8 +46,12 @@ export const useProjectStore = create<ProjectState>((set) => ({
   async pick() {
     set({ busy: true, error: null });
     try {
+      const previous = get().project;
       const picked = await getServices().project.pickFolder();
-      if (picked) set({ project: picked });
+      if (picked) {
+        set({ project: picked });
+        projectChanged(previous, picked);
+      }
     } catch (err) {
       set({ error: toVinnieError(err) });
     } finally {
@@ -42,8 +62,10 @@ export const useProjectStore = create<ProjectState>((set) => ({
   async clear() {
     set({ busy: true, error: null });
     try {
+      const previous = get().project;
       await getServices().project.clear();
       set({ project: null });
+      projectChanged(previous, null);
     } catch (err) {
       set({ error: toVinnieError(err) });
     } finally {

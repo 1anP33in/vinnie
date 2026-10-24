@@ -63,6 +63,13 @@ export function MessageList() {
               thinking={streaming.thinking}
               showReasoning={showReasoning}
               stopping={streaming.phase === "stopping"}
+              status={
+                streaming.phase === "tools"
+                  ? `${streaming.toolLabel ?? "Using a tool"}…`
+                  : streaming.phase === "context"
+                    ? "Gathering project context…"
+                    : null
+              }
             />
           )}
         </div>

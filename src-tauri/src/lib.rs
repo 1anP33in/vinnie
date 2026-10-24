@@ -6,16 +6,30 @@
 //! - `ollama`     — Ollama HTTP client and streaming decoder
 //! - `settings`   — user settings and validation
 //! - `project`    — active project folder (metadata only in Phase 1)
-//! - `generation` — cancellation registry for in-flight generations
+//! - `generation` — cancellation registry for generations, searches, commands
+//! - `workspace`  — path boundary enforcement, file service, search service
+//! - `changes`    — change manager: snapshots, diffs, revert, history
+//! - `process`    — command policy and process execution
+//! - `permissions`— workspace permission model (enforced here, not by the model)
+//! - `deps`       — package-manager detection and install commands
+//! - `analyzer`   — lightweight project analysis
+//! - `git`        — read-only Git status
 
+mod analyzer;
+mod changes;
 mod commands;
 mod db;
+mod deps;
 mod error;
 mod generation;
+mod git;
 mod ollama;
+mod permissions;
+mod process;
 mod project;
 mod settings;
 mod state;
+mod workspace;
 
 use tauri::Manager;
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
@@ -38,6 +52,8 @@ fn init_state(app: &tauri::AppHandle) -> Result<AppState, AppError> {
         db,
         http: ollama::build_http_client()?,
         generations: Default::default(),
+        searches: Default::default(),
+        processes: Default::default(),
         paths: AppPaths {
             data_dir,
             database,
@@ -96,6 +112,30 @@ pub fn run() {
             commands::project::get_project,
             commands::project::pick_project_folder,
             commands::project::clear_project,
+            commands::workspace::ws_list_dir,
+            commands::workspace::ws_project_tree,
+            commands::workspace::ws_read_file,
+            commands::workspace::ws_stat_file,
+            commands::workspace::ws_create_dir,
+            commands::workspace::ws_preview_change,
+            commands::workspace::ws_apply_change,
+            commands::workspace::ws_search,
+            commands::workspace::ws_cancel_search,
+            commands::changes::changes_list,
+            commands::changes::changes_detail,
+            commands::changes::changes_revert,
+            commands::changes::changes_revert_task,
+            commands::process::assess_command,
+            commands::process::run_command,
+            commands::process::cancel_command,
+            commands::process::allowlist_list,
+            commands::process::allowlist_remove,
+            commands::analysis::analyze_project,
+            commands::analysis::get_project_metadata,
+            commands::analysis::git_status,
+            commands::analysis::detect_package_managers,
+            commands::analysis::build_install_command,
+            commands::app::open_log_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Vinnie");

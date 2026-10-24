@@ -5,6 +5,19 @@ import type { Settings } from "@/lib/ipc/types";
 
 export const DEFAULT_ENDPOINT = "http://localhost:11434";
 
+export const DEFAULT_IGNORED_DIRECTORIES = [
+  "node_modules",
+  ".git",
+  ".vscode",
+  ".idea",
+  "bin",
+  "obj",
+  "dist",
+  "build",
+  "__pycache__",
+  "target",
+];
+
 export const DEFAULT_SETTINGS: Settings = {
   ollamaEndpoint: DEFAULT_ENDPOINT,
   defaultModel: null,
@@ -13,6 +26,10 @@ export const DEFAULT_SETTINGS: Settings = {
   showReasoning: true,
   reduceEffects: false,
   sidebarCollapsed: false,
+  permissions: { read: "allowed", write: "approval", execute: "approval", installDependencies: "approval" },
+  ignoredDirectories: DEFAULT_IGNORED_DIRECTORIES,
+  toolsEnabled: true,
+  projectContextEnabled: true,
 };
 
 export type SettingsErrors = Partial<Record<keyof Settings, string>>;
@@ -42,8 +59,21 @@ export function validateModelName(raw: string | null): string | null {
   return null;
 }
 
+export function validateIgnoredDirectories(names: string[]): string | null {
+  for (const raw of names) {
+    const name = raw.trim();
+    if (!name) continue;
+    if (name.length > 100 || /[\\/:*?]/.test(name) || name === "." || name === "..") {
+      return `"${name}" is not a valid folder name to ignore. Use plain names like node_modules.`;
+    }
+  }
+  return null;
+}
+
 export function validateSettings(settings: Settings): SettingsErrors {
   const errors: SettingsErrors = {};
+  const ignored = validateIgnoredDirectories(settings.ignoredDirectories);
+  if (ignored) errors.ignoredDirectories = ignored;
   const endpoint = validateEndpoint(settings.ollamaEndpoint);
   if (endpoint) errors.ollamaEndpoint = endpoint;
   const model = validateModelName(settings.defaultModel);

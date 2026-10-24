@@ -54,6 +54,20 @@ pub fn get_app_info(app: AppHandle, state: State<'_, AppState>) -> AppInfo {
     }
 }
 
+/// Open the diagnostic log folder in File Explorer.
+#[tauri::command]
+pub fn open_log_dir(app: AppHandle, state: State<'_, AppState>) -> AppResult<()> {
+    let dir = state
+        .paths
+        .log_dir
+        .clone()
+        .ok_or_else(|| AppError::not_found("The log folder could not be determined."))?;
+    std::fs::create_dir_all(&dir)?;
+    app.opener()
+        .open_path(dir.display().to_string(), None::<&str>)
+        .map_err(|e| AppError::internal(format!("Could not open the log folder: {e}")))
+}
+
 /// Validate that a URL is safe to hand to the system browser.
 pub fn validate_external_url(raw: &str) -> AppResult<Url> {
     let url = Url::parse(raw.trim())

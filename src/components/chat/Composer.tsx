@@ -22,12 +22,26 @@ export function Composer() {
   const busy = generation !== null;
   const canSend = text.trim().length > 0 && !busy && !!selectedModel;
 
-  // Auto-grow up to a maximum height.
+  // Auto-grow up to a maximum height. Re-measure when the width changes too:
+  // panels can mount at zero width and be resized later.
   useLayoutEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, MAX_HEIGHT_PX)}px`;
+    const fit = () => {
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight, MAX_HEIGHT_PX)}px`;
+    };
+    fit();
+    if (typeof ResizeObserver === "undefined") return;
+    let lastWidth = el.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (el.clientWidth !== lastWidth) {
+        lastWidth = el.clientWidth;
+        fit();
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
   }, [text]);
 
   useEffect(() => {

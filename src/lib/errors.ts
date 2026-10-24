@@ -13,6 +13,13 @@ export type ErrorKind =
   | "busy"
   | "io"
   | "internal"
+  | "forbidden"
+  | "blocked"
+  | "permission_denied"
+  | "approval_required"
+  | "conflict"
+  | "tools_unsupported"
+  | "no_workspace"
   | "unknown";
 
 const KNOWN_KINDS = new Set<string>([
@@ -28,6 +35,13 @@ const KNOWN_KINDS = new Set<string>([
   "busy",
   "io",
   "internal",
+  "forbidden",
+  "blocked",
+  "permission_denied",
+  "approval_required",
+  "conflict",
+  "tools_unsupported",
+  "no_workspace",
 ]);
 
 export class VinnieError extends Error {
@@ -118,6 +132,36 @@ export function describeError(err: unknown, ctx: ErrorContext = {}): ErrorDescri
       return { title: "Not found", detail: e.message };
     case "busy":
       return { title: "Already working", detail: e.message };
+    case "forbidden":
+      return {
+        title: "Outside the project",
+        detail: e.message,
+        hint: "Vinnie can only work with files inside the selected project folder.",
+      };
+    case "blocked":
+      return {
+        title: "Command blocked",
+        detail: e.message,
+        hint: "This command is blocked by Vinnie's command policy for your safety.",
+      };
+    case "permission_denied":
+      return { title: "Not permitted", detail: e.message, hint: "You can change permissions in Settings." };
+    case "approval_required":
+      return { title: "Approval needed", detail: e.message };
+    case "conflict":
+      return {
+        title: "File changed elsewhere",
+        detail: e.message,
+        hint: "Reload the file to see the latest version, or compare before overwriting.",
+      };
+    case "tools_unsupported":
+      return {
+        title: "This model can't use tools",
+        detail: e.message,
+        hint: "Pick a model with tool support (for example qwen3 or qwen2.5-coder) to let Vinnie search and edit the project.",
+      };
+    case "no_workspace":
+      return { title: "No project folder", detail: e.message };
     default:
       return { title: "Something went wrong", detail: e.message };
   }

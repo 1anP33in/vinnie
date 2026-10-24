@@ -14,6 +14,7 @@ import { useConnectionStore } from "@/state/connectionStore";
 import { useConversationStore } from "@/state/conversationStore";
 import { useProjectStore } from "@/state/projectStore";
 import { useSettingsStore } from "@/state/settingsStore";
+import { AllowedCommands, PermissionEditor } from "./WorkspaceSettings";
 
 function Section({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
   return (
@@ -95,6 +96,36 @@ function Segmented<T extends string>({ value, options, onChange, label }: {
         </button>
       ))}
     </div>
+  );
+}
+
+function IgnoredDirsInput({ value, onChange }: { value: string[]; onChange(v: string[]): void }) {
+  const parse = (text: string) =>
+    text
+      .split(/[,\n]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  const [text, setText] = useState(value.join(", "));
+  // Resync when the list changes from outside (save, discard).
+  const [synced, setSynced] = useState(value);
+  if (synced !== value && JSON.stringify(parse(text)) !== JSON.stringify(value)) {
+    setSynced(value);
+    setText(value.join(", "));
+  }
+  return (
+    <textarea
+      id="ignored-dirs"
+      rows={3}
+      value={text}
+      onChange={(e) => {
+        setText(e.target.value);
+        const next = parse(e.target.value);
+        setSynced(next);
+        onChange(next);
+      }}
+      spellCheck={false}
+      className="rounded-md border border-border bg-bg px-3 py-2 font-mono text-xs outline-none focus:border-accent"
+    />
   );
 }
 
@@ -368,7 +399,39 @@ export function SettingsView() {
             />
           </Section>
 
-          <Section title="Project folder" description="The folder Vinnie will work in. Phase 1 only remembers the selection.">
+          <Section
+            title="Assistant permissions"
+            description="What Vinnie may do in your project. These rules are enforced by the app itself; the model cannot change them."
+          >
+            <Toggle
+              label="Let Vinnie use project tools"
+              description="Search, read, edit, and run commands in the project when you ask. Every change is shown as a diff and can be reverted."
+              checked={draft.toolsEnabled}
+              onChange={(v) => update("toolsEnabled", v)}
+            />
+            <Toggle
+              label="Include project context"
+              description="Send a short project summary, the folder structure, and the file open in the editor with each message (never the whole project)."
+              checked={draft.projectContextEnabled}
+              onChange={(v) => update("projectContextEnabled", v)}
+            />
+            <PermissionEditor value={draft.permissions} onChange={(v) => update("permissions", v)} />
+            <Field label="Always-allowed commands in this project">
+              <AllowedCommands />
+            </Field>
+          </Section>
+
+          <Section title="Ignored folders" description="Skipped by the explorer (shown dimmed), search, and project analysis.">
+            <Field
+              label="Folder names (comma or line separated)"
+              htmlFor="ignored-dirs"
+              error={errors.ignoredDirectories}
+            >
+              <IgnoredDirsInput value={draft.ignoredDirectories} onChange={(v) => update("ignoredDirectories", v)} />
+            </Field>
+          </Section>
+
+          <Section title="Project folder" description="The folder Vinnie works in. Files outside it are never read or changed.">
             <div className="flex flex-wrap items-center gap-2">
               <div className="min-w-0 flex-1">
                 {project ? (
@@ -434,9 +497,14 @@ export function SettingsView() {
               <dt className="text-faint">Logs</dt>
               <dd className="break-all font-mono">{appInfo?.logDir ?? "—"}</dd>
             </dl>
-            <p className="text-xs text-faint">Logs record events and errors, never message contents.</p>
-            <div>
+            <p className="text-xs text-faint">
+              Logs record events, tool use, commands, and errors — never message contents or file contents.
+            </p>
+            <div className="flex flex-wrap gap-2">
               <CopyButton text={diagnostics} label="Copy diagnostics" showLabel className="border border-border" />
+              <Button size="sm" onClick={() => void getServices().system.openLogDir().catch(() => {})}>
+                Open log folder
+              </Button>
             </div>
           </Section>
         </div>

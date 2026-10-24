@@ -122,35 +122,39 @@
   --font-mono: "Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, monospace;
 }
 
-html,
-body,
-#root {
-  height: 100%;
-}
+/* Base element styles live in the base layer so Tailwind utilities (which
+   are layered) can override them, e.g. `outline-none` on text inputs. */
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
 
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-sans);
-  font-size: 14px;
-  -webkit-font-smoothing: antialiased;
-  overflow: hidden;
-}
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
 
-::selection {
-  background: rgb(34 211 238 / 0.3);
-}
+  ::selection {
+    background: rgb(34 211 238 / 0.3);
+  }
 
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 
-/* Thin, theme-aware scrollbars (WebView2 / Chromium). */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
+  /* Thin, theme-aware scrollbars (WebView2 / Chromium). */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
 }
 
 .frost {

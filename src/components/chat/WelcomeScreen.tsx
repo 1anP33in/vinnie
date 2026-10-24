@@ -10,6 +10,13 @@ import { useUiStore } from "@/state/uiStore";
 import { DragonPlaceholder } from "./DragonPlaceholder";
 import { NoModelsNotice } from "./NoModelsNotice";
 
+const PROJECT_SUGGESTIONS = [
+  "Give me an overview of this project.",
+  "Which files handle the main features?",
+  "Run the tests and explain any failures.",
+  "Find TODO and FIXME comments in the project.",
+];
+
 const SUGGESTIONS = [
   "Explain the difference between a process and a thread.",
   "Write a TypeScript function that debounces another function.",
@@ -28,6 +35,7 @@ function ConnectionPanel() {
   const endpoint = useSettingsStore((s) => s.settings.ollamaEndpoint);
   const setView = useUiStore((s) => s.setView);
   const fillComposer = useUiStore((s) => s.fillComposer);
+  const hasProject = useProjectStore((s) => s.project?.status === "available");
 
   if (status === "unknown" || status === "checking") {
     return (
@@ -79,7 +87,7 @@ function ConnectionPanel() {
   }
   return (
     <div className="grid gap-2 sm:grid-cols-2">
-      {SUGGESTIONS.map((s) => (
+      {(hasProject ? PROJECT_SUGGESTIONS : SUGGESTIONS).map((s) => (
         <button
           key={s}
           type="button"
@@ -122,8 +130,8 @@ export function WelcomeScreen() {
         <ConnectionPanel />
         {project && (
           <p className="text-xs text-faint">
-            Project folder selected. Vinnie doesn't read project files yet; workspace awareness arrives in the next
-            phase.
+            Vinnie can search and read {project.name}, and — with your approval — edit files and run commands. Every
+            change is shown as a diff and can be reverted.
           </p>
         )}
         <DragonPlaceholder />

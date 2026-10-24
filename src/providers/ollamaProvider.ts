@@ -13,7 +13,10 @@ export function createOllamaProvider(): AIProvider {
       const requestId = newRequestId();
       let settled = false;
       const result = commands
-        .chatStream({ requestId, model: request.model, messages: request.messages }, onEvent)
+        .chatStream(
+          { requestId, model: request.model, messages: request.messages, tools: request.tools ?? [] },
+          onEvent,
+        )
         .finally(() => {
           settled = true;
         });

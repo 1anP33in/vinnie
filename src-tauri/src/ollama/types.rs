@@ -41,12 +41,20 @@ pub struct ChatRequestBody<'a> {
     pub model: &'a str,
     pub messages: &'a [ChatMessage],
     pub stream: bool,
+    #[serde(skip_serializing_if = "<[serde_json::Value]>::is_empty")]
+    pub tools: &'a [serde_json::Value],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+    /// Tool calls made by an assistant message (passed back verbatim).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<serde_json::Value>>,
+    /// For `tool` messages: the tool whose result this is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
 }
 
 /// One NDJSON line of a streaming `/api/chat` response.
@@ -79,6 +87,8 @@ pub struct ChunkMessage {
     pub content: Option<String>,
     #[serde(default)]
     pub thinking: Option<String>,
+    #[serde(default)]
+    pub tool_calls: Option<Vec<serde_json::Value>>,
 }
 
 // ---- Shapes exposed to the frontend ----------------------------------------
@@ -172,4 +182,7 @@ pub struct GenerationOutcome {
     pub content: String,
     pub thinking: String,
     pub stats: Option<GenerationStats>,
+    /// Tool calls the model requested (Ollama format). The app decides
+    /// whether and how to execute them.
+    pub tool_calls: Vec<serde_json::Value>,
 }

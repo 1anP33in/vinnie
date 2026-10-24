@@ -11,6 +11,8 @@ use url::Url;
 
 use crate::db::kv;
 use crate::error::{AppError, AppResult};
+use crate::permissions::PermissionSettings;
+use crate::workspace::ignore_rules::DEFAULT_IGNORED_DIRECTORIES;
 
 const SETTINGS_KEY: &str = "app_settings";
 pub const DEFAULT_ENDPOINT: &str = "http://localhost:11434";
@@ -47,6 +49,14 @@ pub struct Settings {
     /// Disable glow/frost effects and animations.
     pub reduce_effects: bool,
     pub sidebar_collapsed: bool,
+    /// What the assistant may do in the workspace (enforced in the backend).
+    pub permissions: PermissionSettings,
+    /// Folder names skipped by the explorer, search, and analysis.
+    pub ignored_directories: Vec<String>,
+    /// Let the model call workspace tools (search, read, edit, run).
+    pub tools_enabled: bool,
+    /// Attach a project summary and the active file to chat requests.
+    pub project_context_enabled: bool,
 }
 
 impl Default for Settings {
@@ -59,6 +69,13 @@ impl Default for Settings {
             show_reasoning: true,
             reduce_effects: false,
             sidebar_collapsed: false,
+            permissions: PermissionSettings::default(),
+            ignored_directories: DEFAULT_IGNORED_DIRECTORIES
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            tools_enabled: true,
+            project_context_enabled: true,
         }
     }
 }
@@ -122,7 +139,33 @@ impl Settings {
             None | Some("") => None,
             Some(name) => Some(validate_model_name(name)?),
         };
+        let mut ignored_directories = Vec::new();
+        for raw in &self.ignored_directories {
+            let name = raw.trim();
+            if name.is_empty() {
+                continue;
+            }
+            if name.len() > 100
+                || name.contains(['/', '\\', ':', '*', '?'])
+                || name == "."
+                || name == ".."
+            {
+                return Err(AppError::validation(format!(
+                    "\"{name}\" is not a valid folder name to ignore. Use plain names like node_modules."
+                )));
+            }
+            if !ignored_directories
+                .iter()
+                .any(|d: &String| d.eq_ignore_ascii_case(name))
+            {
+                ignored_directories.push(name.to_string());
+            }
+        }
+        if ignored_directories.len() > 100 {
+            return Err(AppError::validation("Ignore at most 100 folder names."));
+        }
         Ok(Settings {
+            ignored_directories,
             ollama_endpoint: normalize_endpoint(&self.ollama_endpoint)?,
             default_model,
             ..self.clone()
@@ -205,6 +248,17 @@ mod tests {
     }
 
     #[test]
+    fn rejects_invalid_ignored_directories() {
+        for bad in ["../x", "a/b", "C:", "*"] {
+            let s = Settings {
+                ignored_directories: vec![bad.into()],
+                ..Settings::default()
+            };
+            assert!(s.validated().is_err(), "{bad}");
+        }
+    }
+
+    #[test]
     fn defaults_when_missing_or_corrupt() {
         let db = Database::open_in_memory().unwrap();
         let conn = db.conn().unwrap();
@@ -235,10 +289,19 @@ mod tests {
             show_reasoning: false,
             reduce_effects: true,
             sidebar_collapsed: true,
+            permissions: PermissionSettings::default(),
+            ignored_directories: vec![
+                " node_modules ".into(),
+                "NODE_MODULES".into(),
+                "vendor".into(),
+            ],
+            tools_enabled: false,
+            project_context_enabled: true,
         };
         let saved = save(&conn, &settings).unwrap();
         assert_eq!(saved.ollama_endpoint, "http://127.0.0.1:11434");
         assert_eq!(saved.default_model, None);
+        assert_eq!(saved.ignored_directories, vec!["node_modules", "vendor"]);
         assert_eq!(load(&conn).unwrap(), saved);
 
         let bad = Settings {

@@ -32,6 +32,20 @@ pub enum ErrorKind {
     Io,
     /// Unexpected internal failure.
     Internal,
+    /// The path is outside the workspace or otherwise not allowed.
+    Forbidden,
+    /// The command is blocked by the command policy.
+    Blocked,
+    /// The permission settings deny this operation for the assistant.
+    PermissionDenied,
+    /// The operation needs explicit user approval first.
+    ApprovalRequired,
+    /// The file changed since it was read (external modification).
+    Conflict,
+    /// The selected model cannot use tools.
+    ToolsUnsupported,
+    /// No project folder is selected (or it is unavailable).
+    NoWorkspace,
 }
 
 #[derive(Debug, Clone, Serialize, thiserror::Error, PartialEq, Eq)]
@@ -61,6 +75,32 @@ impl AppError {
 
     pub fn internal(message: impl Into<String>) -> Self {
         Self::new(ErrorKind::Internal, message)
+    }
+
+    pub fn forbidden(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Forbidden, message)
+    }
+
+    pub fn conflict(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Conflict, message)
+    }
+
+    /// Wrap an I/O error with the (workspace-relative) path it concerns.
+    pub fn io(path: &str, err: &std::io::Error) -> Self {
+        let message = match err.kind() {
+            std::io::ErrorKind::NotFound => format!("{path} does not exist."),
+            std::io::ErrorKind::PermissionDenied => {
+                format!("Windows denied access to {path}. It may be read-only or open in another program.")
+            }
+            std::io::ErrorKind::AlreadyExists => format!("{path} already exists."),
+            _ => format!("Could not access {path}: {err}"),
+        };
+        let kind = if err.kind() == std::io::ErrorKind::NotFound {
+            ErrorKind::NotFound
+        } else {
+            ErrorKind::Io
+        };
+        Self::new(kind, message)
     }
 }
 

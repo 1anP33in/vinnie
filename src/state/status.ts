@@ -11,6 +11,10 @@ export function useCurrentOperation(): string | null {
     switch (generation.phase) {
       case "preparing":
         return "Saving your message…";
+      case "context":
+        return "Gathering project context…";
+      case "tools":
+        return generation.toolLabel ? `${generation.toolLabel}…` : "Using tools…";
       case "waiting":
         return `Waiting for ${generation.model} (loading the model can take a moment)…`;
       case "streaming":

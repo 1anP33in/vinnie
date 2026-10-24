@@ -51,6 +51,7 @@ describe("Composer", () => {
     await user.type(screen.getByLabelText("Message"), "tell me a story{Enter}");
     const stop = await screen.findByRole("button", { name: "Stop generating" });
     expect(screen.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
+    await waitFor(() => expect(fakes.provider.streams).toHaveLength(1));
 
     await user.click(stop);
     expect(fakes.provider.lastStream().cancelled).toBe(true);

@@ -98,7 +98,9 @@ impl OllamaClient {
         } else {
             message
         };
-        let kind = if status == reqwest::StatusCode::NOT_FOUND && message.contains("not found") {
+        let kind = if message.contains("does not support tools") {
+            ErrorKind::ToolsUnsupported
+        } else if status == reqwest::StatusCode::NOT_FOUND && message.contains("not found") {
             ErrorKind::ModelNotFound
         } else {
             ErrorKind::Http
@@ -168,6 +170,7 @@ impl OllamaClient {
         &self,
         model: &str,
         messages: &[ChatMessage],
+        tools: &[serde_json::Value],
         cancel: &CancellationToken,
         timeouts: StreamTimeouts,
         mut emit: F,
@@ -180,6 +183,7 @@ impl OllamaClient {
             content: String::new(),
             thinking: String::new(),
             stats: None,
+            tool_calls: Vec::new(),
         };
         let cancelled = |mut outcome: GenerationOutcome| {
             outcome.status = GenerationStatus::Cancelled;
@@ -190,6 +194,7 @@ impl OllamaClient {
             model,
             messages,
             stream: true,
+            tools,
         };
         let send = self.http.post(self.url("/api/chat")).json(&body).send();
 
@@ -281,6 +286,9 @@ fn apply_chunk<F: FnMut(StreamEvent)>(
                 text: content.to_owned(),
             });
         }
+        if let Some(calls) = &message.tool_calls {
+            outcome.tool_calls.extend(calls.iter().cloned());
+        }
     }
     if chunk.done {
         let stats = GenerationStats::from_chunk(&chunk);
@@ -311,6 +319,8 @@ mod tests {
         vec![ChatMessage {
             role: "user".into(),
             content: "hi".into(),
+            tool_calls: None,
+            tool_name: None,
         }]
     }
 
@@ -386,7 +396,7 @@ mod tests {
         .await;
         let mut events = Vec::new();
         let outcome = client(&base)
-            .chat_stream("m", &msgs(), &CancellationToken::new(), fast(), |e| {
+            .chat_stream("m", &msgs(), &[], &CancellationToken::new(), fast(), |e| {
                 events.push(e)
             })
             .await
@@ -405,6 +415,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn collects_tool_calls_and_sends_tools() {
+        let body = concat!(
+            r#"{"message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"search_files","arguments":{"query":"duty"}}}]},"done":false}"#,
+            "
+",
+            r#"{"message":{"role":"assistant","content":""},"done":true,"done_reason":"stop"}"#,
+            "
+"
+        );
+        let (base, requests) =
+            test_server::serve(vec![MockResponse::chunked(200, vec![body.into()])]).await;
+        let tools =
+            vec![serde_json::json!({"type": "function", "function": {"name": "search_files"}})];
+        let outcome = client(&base)
+            .chat_stream(
+                "m",
+                &msgs(),
+                &tools,
+                &CancellationToken::new(),
+                fast(),
+                |_| {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome.tool_calls.len(), 1);
+        assert_eq!(outcome.tool_calls[0]["function"]["name"], "search_files");
+        assert_eq!(
+            outcome.tool_calls[0]["function"]["arguments"]["query"],
+            "duty"
+        );
+        let request = requests.lock().await[0].clone();
+        assert!(request.contains(r#""tools":[{"#));
+    }
+
+    #[tokio::test]
+    async fn models_without_tool_support_are_reported() {
+        let (base, _) = test_server::serve(vec![MockResponse::json(
+            400,
+            r#"{"error":"registry.ollama.ai/library/gemma:2b does not support tools"}"#,
+        )])
+        .await;
+        let tools = vec![serde_json::json!({"type": "function"})];
+        let err = client(&base)
+            .chat_stream(
+                "m",
+                &msgs(),
+                &tools,
+                &CancellationToken::new(),
+                fast(),
+                |_| {},
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::ToolsUnsupported);
+    }
+
+    #[tokio::test]
+    async fn requests_without_tools_omit_the_field() {
+        let (base, requests) =
+            test_server::serve(vec![MockResponse::chunked(200, vec![STREAM.into()])]).await;
+        client(&base)
+            .chat_stream("m", &msgs(), &[], &CancellationToken::new(), fast(), |_| {})
+            .await
+            .unwrap();
+        assert!(!requests.lock().await[0].contains("\"tools\""));
+    }
+
+    #[tokio::test]
     async fn missing_model_maps_to_model_not_found() {
         let (base, _) = test_server::serve(vec![MockResponse::json(
             404,
@@ -412,7 +490,14 @@ mod tests {
         )])
         .await;
         let err = client(&base)
-            .chat_stream("nope", &msgs(), &CancellationToken::new(), fast(), |_| {})
+            .chat_stream(
+                "nope",
+                &msgs(),
+                &[],
+                &CancellationToken::new(),
+                fast(),
+                |_| {},
+            )
             .await
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::ModelNotFound);
@@ -427,7 +512,7 @@ mod tests {
         )])
         .await;
         let err = client(&base)
-            .chat_stream("m", &msgs(), &CancellationToken::new(), fast(), |_| {})
+            .chat_stream("m", &msgs(), &[], &CancellationToken::new(), fast(), |_| {})
             .await
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Http);
@@ -441,7 +526,7 @@ mod tests {
         let (base, _) =
             test_server::serve(vec![MockResponse::chunked(200, vec![body.into()])]).await;
         let err = client(&base)
-            .chat_stream("m", &msgs(), &CancellationToken::new(), fast(), |_| {})
+            .chat_stream("m", &msgs(), &[], &CancellationToken::new(), fast(), |_| {})
             .await
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Http);
@@ -455,7 +540,7 @@ mod tests {
             test_server::serve(vec![MockResponse::chunked(200, vec![body.into()])]).await;
         let mut content = String::new();
         let err = client(&base)
-            .chat_stream("m", &msgs(), &CancellationToken::new(), fast(), |e| {
+            .chat_stream("m", &msgs(), &[], &CancellationToken::new(), fast(), |e| {
                 if let StreamEvent::Content { text } = e {
                     content.push_str(&text);
                 }
@@ -474,7 +559,7 @@ mod tests {
         )])
         .await;
         let err = client(&base)
-            .chat_stream("m", &msgs(), &CancellationToken::new(), fast(), |_| {})
+            .chat_stream("m", &msgs(), &[], &CancellationToken::new(), fast(), |_| {})
             .await
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Malformed);
@@ -484,7 +569,7 @@ mod tests {
     async fn silent_server_times_out() {
         let (base, _) = test_server::serve(vec![MockResponse::silent()]).await;
         let err = client(&base)
-            .chat_stream("m", &msgs(), &CancellationToken::new(), fast(), |_| {})
+            .chat_stream("m", &msgs(), &[], &CancellationToken::new(), fast(), |_| {})
             .await
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Timeout);
@@ -498,7 +583,7 @@ mod tests {
         ])
         .await;
         let err = client(&base)
-            .chat_stream("m", &msgs(), &CancellationToken::new(), fast(), |_| {})
+            .chat_stream("m", &msgs(), &[], &CancellationToken::new(), fast(), |_| {})
             .await
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Timeout);
@@ -515,11 +600,18 @@ mod tests {
         let trigger = cancel.clone();
         let started = std::time::Instant::now();
         let outcome = client(&base)
-            .chat_stream("m", &msgs(), &cancel, StreamTimeouts::default(), move |e| {
-                if matches!(e, StreamEvent::Content { .. }) {
-                    trigger.cancel();
-                }
-            })
+            .chat_stream(
+                "m",
+                &msgs(),
+                &[],
+                &cancel,
+                StreamTimeouts::default(),
+                move |e| {
+                    if matches!(e, StreamEvent::Content { .. }) {
+                        trigger.cancel();
+                    }
+                },
+            )
             .await
             .unwrap();
         assert_eq!(outcome.status, GenerationStatus::Cancelled);
@@ -536,7 +628,14 @@ mod tests {
         let cancel = CancellationToken::new();
         cancel.cancel();
         let outcome = client(&base)
-            .chat_stream("m", &msgs(), &cancel, StreamTimeouts::default(), |_| {})
+            .chat_stream(
+                "m",
+                &msgs(),
+                &[],
+                &cancel,
+                StreamTimeouts::default(),
+                |_| {},
+            )
             .await
             .unwrap();
         assert_eq!(outcome.status, GenerationStatus::Cancelled);

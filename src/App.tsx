@@ -1,12 +1,13 @@
 import { useEffect } from "react";
+import { Panel, PanelGroup } from "react-resizable-panels";
 import { bootstrap } from "@/app/bootstrap";
 import { useReconnectEffect, useShortcuts, useThemeEffect } from "@/app/useAppEffects";
-import { ChatView } from "@/components/chat/ChatView";
 import { ErrorNotice } from "@/components/common/ErrorNotice";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { Toolbar } from "@/components/layout/Toolbar";
+import { ResizeHandle, Workbench } from "@/components/layout/Workbench";
 import { SettingsView } from "@/components/settings/SettingsView";
-import { Sidebar } from "@/components/sidebar/Sidebar";
+import { ActivityRail, SidePanel } from "@/components/sidebar/Sidebar";
 import { useConversationStore } from "@/state/conversationStore";
 import { useSettingsStore } from "@/state/settingsStore";
 import { useUiStore } from "@/state/uiStore";
@@ -31,6 +32,7 @@ function GlobalNotices() {
 
 export default function App() {
   const view = useUiStore((s) => s.view);
+  const collapsed = useSettingsStore((s) => s.settings.sidebarCollapsed);
   useThemeEffect();
   useReconnectEffect();
   useShortcuts();
@@ -43,12 +45,24 @@ export default function App() {
 
   return (
     <div className="flex h-full bg-bg text-text">
-      <Sidebar />
-      <main className="flex min-w-0 flex-1 flex-col">
-        <Toolbar />
-        {view === "settings" ? <SettingsView /> : <ChatView />}
-        <StatusBar />
-      </main>
+      <ActivityRail />
+      <PanelGroup direction="horizontal" autoSaveId="vinnie-shell" className="min-w-0 flex-1">
+        {!collapsed && (
+          <>
+            <Panel id="side" order={1} defaultSize={20} minSize={14} maxSize={40}>
+              <SidePanel />
+            </Panel>
+            <ResizeHandle direction="horizontal" />
+          </>
+        )}
+        <Panel id="main" order={2} minSize={40}>
+          <main className="flex h-full min-w-0 flex-col">
+            <Toolbar />
+            {view === "settings" ? <SettingsView /> : <Workbench />}
+            <StatusBar />
+          </main>
+        </Panel>
+      </PanelGroup>
       <GlobalNotices />
     </div>
   );

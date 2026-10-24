@@ -5,6 +5,7 @@ import { Logo } from "@/components/common/Logo";
 import { formatTime } from "@/lib/dates";
 import type { UiMessage } from "@/state/conversationStore";
 import { Markdown } from "./Markdown";
+import { ToolCallChips, ToolResultBubble } from "./ToolMessages";
 
 function Reasoning({ text, streaming, defaultOpen }: { text: string; streaming?: boolean; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(!!defaultOpen);
@@ -56,6 +57,8 @@ export const MessageBubble = memo(function MessageBubble({
   showReasoning: boolean;
   onRetrySave?: (localId: string) => void;
 }) {
+  if (message.role === "tool") return <ToolResultBubble message={message} />;
+  const toolCalls = message.toolCalls ?? [];
   if (message.role === "user") {
     return (
       <div className="group flex justify-end" data-testid="message-user">
@@ -79,9 +82,10 @@ export const MessageBubble = memo(function MessageBubble({
         {showReasoning && message.thinking?.trim() && <Reasoning text={message.thinking.trim()} />}
         {message.content ? (
           <Markdown content={message.content} />
-        ) : (
+        ) : toolCalls.length === 0 ? (
           <p className="italic text-faint">No response text.</p>
-        )}
+        ) : null}
+        {toolCalls.length > 0 && <ToolCallChips calls={toolCalls} />}
         {message.status === "interrupted" && (
           <div className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-warning-soft px-2 py-1 text-xs text-warning">
             <CircleSlash size={12} />
@@ -118,12 +122,15 @@ export function StreamingBubble({
   thinking,
   showReasoning,
   stopping,
+  status,
 }: {
   model: string;
   content: string;
   thinking: string;
   showReasoning: boolean;
   stopping: boolean;
+  /** What is happening when there is no text yet (e.g. a running tool). */
+  status?: string | null;
 }) {
   return (
     <div className="flex gap-3" data-testid="message-streaming" aria-live="polite" aria-busy="true">
@@ -144,7 +151,7 @@ export function StreamingBubble({
             <span className="pulse-dot size-1.5 rounded-full bg-accent [animation-delay:200ms]" />
             <span className="pulse-dot size-1.5 rounded-full bg-accent [animation-delay:400ms]" />
             <span className="ml-1.5">
-              {stopping ? "Stopping…" : thinking.trim() ? "Reasoning…" : "Waiting for the model…"}
+              {stopping ? "Stopping…" : status ? status : thinking.trim() ? "Reasoning…" : "Waiting for the model…"}
             </span>
           </div>
         )}

@@ -12,6 +12,8 @@ use crate::state::AppState;
 
 const MAX_HISTORY_MESSAGES: usize = 2_000;
 const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
+const MAX_TOOLS: usize = 32;
+const MAX_TOOL_SPEC_BYTES: usize = 16 * 1024;
 
 fn client_for(state: &AppState, endpoint: Option<String>) -> AppResult<OllamaClient> {
     let endpoint = match endpoint {
@@ -51,6 +53,9 @@ pub struct ChatStreamRequest {
     pub request_id: String,
     pub model: String,
     pub messages: Vec<ChatMessage>,
+    /// Tool definitions offered to the model (Ollama/OpenAI function format).
+    #[serde(default)]
+    pub tools: Vec<serde_json::Value>,
 }
 
 impl ChatStreamRequest {
@@ -75,8 +80,16 @@ impl ChatStreamRequest {
         }
         let mut total = 0usize;
         for message in &self.messages {
-            if !matches!(message.role.as_str(), "user" | "assistant" | "system") {
+            if !matches!(
+                message.role.as_str(),
+                "user" | "assistant" | "system" | "tool"
+            ) {
                 return Err(AppError::validation("Invalid message role."));
+            }
+            if message.tool_calls.is_some() && message.role != "assistant" {
+                return Err(AppError::validation(
+                    "Only assistant messages can contain tool calls.",
+                ));
             }
             total += message.content.len();
         }
@@ -85,10 +98,22 @@ impl ChatStreamRequest {
                 "This conversation is too large to send.",
             ));
         }
-        if self.messages.last().is_none_or(|m| m.role != "user") {
+        if self
+            .messages
+            .last()
+            .is_none_or(|m| m.role != "user" && m.role != "tool")
+        {
             return Err(AppError::validation(
-                "The last message must come from the user.",
+                "The last message must come from the user or a tool.",
             ));
+        }
+        if self.tools.len() > MAX_TOOLS {
+            return Err(AppError::validation("Too many tools."));
+        }
+        for tool in &self.tools {
+            if !tool.is_object() || tool.to_string().len() > MAX_TOOL_SPEC_BYTES {
+                return Err(AppError::validation("Invalid tool definition."));
+            }
         }
         Ok(())
     }
@@ -110,15 +135,17 @@ pub async fn chat_stream(
 
     // Never log message content; only metadata.
     log::info!(
-        "generation {} started: model={model}, messages={}",
+        "generation {} started: model={model}, messages={}, tools={}",
         request.request_id,
-        request.messages.len()
+        request.messages.len(),
+        request.tools.len()
     );
 
     let result = client
         .chat_stream(
             &model,
             &request.messages,
+            &request.tools,
             guard.token(),
             StreamTimeouts::default(),
             |event| {
@@ -132,10 +159,11 @@ pub async fn chat_stream(
 
     match &result {
         Ok(outcome) => log::info!(
-            "generation {} finished: {:?}, {} chars",
+            "generation {} finished: {:?}, {} chars, {} tool calls",
             request.request_id,
             outcome.status,
-            outcome.content.len()
+            outcome.content.len(),
+            outcome.tool_calls.len()
         ),
         Err(err) => log::warn!(
             "generation {} failed: {:?}: {err}",
@@ -167,8 +195,11 @@ mod tests {
                 .map(|(role, content)| ChatMessage {
                     role: role.into(),
                     content: content.into(),
+                    tool_calls: None,
+                    tool_name: None,
                 })
                 .collect(),
+            tools: vec![],
         }
     }
 
@@ -180,9 +211,32 @@ mod tests {
     }
 
     #[test]
+    fn accepts_tool_results_as_the_last_message() {
+        let mut r = req(vec![
+            ("user", "find duty"),
+            ("assistant", ""),
+            ("tool", "{}"),
+        ]);
+        r.messages[1].tool_calls = Some(vec![
+            serde_json::json!({"function": {"name": "search_files"}}),
+        ]);
+        assert!(r.validate().is_ok());
+        r.messages[0].tool_calls = Some(vec![]);
+        assert!(r.validate().is_err(), "users cannot send tool calls");
+    }
+
+    #[test]
     fn rejects_invalid_requests() {
         assert!(req(vec![]).validate().is_err());
-        assert!(req(vec![("tool", "x"), ("user", "hi")]).validate().is_err());
+        assert!(req(vec![("function", "x"), ("user", "hi")])
+            .validate()
+            .is_err());
+        let mut too_many = req(vec![("user", "hi")]);
+        too_many.tools = vec![serde_json::json!({}); 40];
+        assert!(too_many.validate().is_err());
+        let mut not_object = req(vec![("user", "hi")]);
+        not_object.tools = vec![serde_json::json!("rm -rf")];
+        assert!(not_object.validate().is_err());
         assert!(req(vec![("user", "hi"), ("assistant", "yo")])
             .validate()
             .is_err());

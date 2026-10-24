@@ -1,9 +1,15 @@
 import { waitFor } from "@testing-library/react";
+import { registerWorkspaceTools } from "@/agent/tools";
 import { VinnieError } from "@/lib/errors";
+import type { ToolCall } from "@/lib/ipc/types";
+import { getServices } from "@/services";
 import { installFakes, resetStores } from "@/test/fakes";
-import { buildHistory, useChatStore } from "./chatStore";
+import { useActivityStore } from "./activityStore";
+import { useApprovalStore } from "./approvalStore";
+import { buildHistory, MAX_TOOL_ROUNDS, useChatStore } from "./chatStore";
 import { useConnectionStore } from "./connectionStore";
 import { toUiMessage, useConversationStore } from "./conversationStore";
+import { useProjectStore } from "./projectStore";
 
 let fakes: ReturnType<typeof installFakes>;
 
@@ -20,6 +26,14 @@ async function waitForGenerationEnd() {
   await waitFor(() => expect(chat().generation).toBeNull());
 }
 
+/** Wait until the n-th model request has started, and return it. */
+async function stream(n: number) {
+  await waitFor(() => expect(fakes.provider.streams).toHaveLength(n));
+  return fakes.provider.lastStream();
+}
+
+const withoutSystem = (messages: { role: string }[]) => messages.filter((m) => m.role !== "system");
+
 describe("chat orchestration", () => {
   it("creates a conversation, persists the user message, streams, and persists the reply", async () => {
     expect(await chat().send("  Explain Rust ownership  ")).toBe(true);
@@ -29,18 +43,19 @@ describe("chat orchestration", () => {
     expect(convs().activeId).toBe(conversation?.id);
     expect(fakes.conversations.messages.map((m) => m.role)).toEqual(["user"]);
 
-    const stream = fakes.provider.lastStream();
-    expect(stream.model).toBe("qwen3:8b");
-    expect(stream.messages).toEqual([{ role: "user", content: "Explain Rust ownership" }]);
+    const s = await stream(1);
+    expect(s.model).toBe("qwen3:8b");
+    expect(s.messages[0]?.role).toBe("system");
+    expect(withoutSystem(s.messages)).toEqual([{ role: "user", content: "Explain Rust ownership" }]);
 
-    stream.emit({ type: "started" });
-    stream.emit({ type: "thinking", text: "Let me think" });
-    stream.emit({ type: "content", text: "Ownership " });
-    stream.emit({ type: "content", text: "means…" });
+    s.emit({ type: "started" });
+    s.emit({ type: "thinking", text: "Let me think" });
+    s.emit({ type: "content", text: "Ownership " });
+    s.emit({ type: "content", text: "means…" });
     await waitFor(() => expect(chat().generation?.content).toBe("Ownership means…"));
     expect(chat().generation?.phase).toBe("streaming");
 
-    stream.complete();
+    s.complete();
     await waitForGenerationEnd();
 
     const saved = fakes.conversations.messages;
@@ -55,12 +70,12 @@ describe("chat orchestration", () => {
 
   it("keeps chronological order across turns and sends the full history", async () => {
     await chat().send("first");
-    fakes.provider.lastStream().emit({ type: "content", text: "one" });
+    (await stream(1)).emit({ type: "content", text: "one" });
     fakes.provider.lastStream().complete();
     await waitForGenerationEnd();
 
     await chat().send("second");
-    expect(fakes.provider.lastStream().messages).toEqual([
+    expect(withoutSystem((await stream(2)).messages)).toEqual([
       { role: "user", content: "first" },
       { role: "assistant", content: "one" },
       { role: "user", content: "second" },
@@ -79,6 +94,7 @@ describe("chat orchestration", () => {
     expect(await first).toBe(true);
     expect(await second).toBe(false);
     expect(fakes.conversations.messages.filter((m) => m.role === "user")).toHaveLength(1);
+    await stream(1);
     expect(fakes.provider.streams).toHaveLength(1);
   });
 
@@ -92,12 +108,12 @@ describe("chat orchestration", () => {
 
   it("stops generation and keeps the partial response marked interrupted", async () => {
     await chat().send("write a story");
-    const stream = fakes.provider.lastStream();
-    stream.emit({ type: "content", text: "Once upon" });
+    const s = await stream(1);
+    s.emit({ type: "content", text: "Once upon" });
     await waitFor(() => expect(chat().generation?.content).toBe("Once upon"));
 
     await chat().stop();
-    expect(stream.cancelled).toBe(true);
+    expect(s.cancelled).toBe(true);
     await waitForGenerationEnd();
 
     const reply = fakes.conversations.messages.at(-1);
@@ -116,9 +132,9 @@ describe("chat orchestration", () => {
 
   it("surfaces generation errors with retry, preserving partial output", async () => {
     await chat().send("hi");
-    const stream = fakes.provider.lastStream();
-    stream.emit({ type: "content", text: "Partial" });
-    stream.fail(new VinnieError("interrupted", "The connection to Ollama closed early."));
+    const s = await stream(1);
+    s.emit({ type: "content", text: "Partial" });
+    s.fail(new VinnieError("interrupted", "The connection to Ollama closed early."));
     await waitForGenerationEnd();
 
     expect(chat().error?.error.kind).toBe("interrupted");
@@ -141,7 +157,7 @@ describe("chat orchestration", () => {
 
   it("reports errors without output and saves nothing extra", async () => {
     await chat().send("hi");
-    fakes.provider.lastStream().fail(new VinnieError("unreachable", "Could not connect"));
+    (await stream(1)).fail(new VinnieError("unreachable", "Could not connect"));
     await waitForGenerationEnd();
     expect(chat().error?.error.kind).toBe("unreachable");
     expect(fakes.conversations.messages.map((m) => m.role)).toEqual(["user"]);
@@ -160,7 +176,7 @@ describe("chat orchestration", () => {
   it("marks an assistant reply as unsaved when persistence fails, and can retry the save", async () => {
     fakes.conversations.failAddMessage = (m) => m.role === "assistant";
     await chat().send("hello");
-    fakes.provider.lastStream().emit({ type: "content", text: "Hi there" });
+    (await stream(1)).emit({ type: "content", text: "Hi there" });
     fakes.provider.lastStream().complete();
     await waitForGenerationEnd();
 
@@ -177,24 +193,136 @@ describe("chat orchestration", () => {
 });
 
 describe("buildHistory", () => {
+  const msg = (
+    id: number,
+    role: "user" | "assistant" | "tool",
+    content: string,
+    extra: Partial<{ toolCalls: ToolCall[]; toolName: string }> = {},
+  ) =>
+    toUiMessage({
+      id,
+      conversationId: "c",
+      role,
+      content,
+      thinking: null,
+      status: "complete",
+      model: null,
+      error: null,
+      toolCalls: extra.toolCalls ?? null,
+      toolName: extra.toolName ?? null,
+      createdAt: id,
+    });
+
   it("drops empty messages and trailing assistant turns", () => {
-    const msg = (id: number, role: "user" | "assistant", content: string) =>
-      toUiMessage({
-        id,
-        conversationId: "c",
-        role,
-        content,
-        thinking: null,
-        status: "complete",
-        model: null,
-        error: null,
-        createdAt: id,
-      });
     expect(
       buildHistory([msg(1, "user", "a"), msg(2, "assistant", ""), msg(3, "user", "b"), msg(4, "assistant", "partial")]),
     ).toEqual([
       { role: "user", content: "a" },
       { role: "user", content: "b" },
     ]);
+  });
+
+  it("keeps tool calls and tool results from earlier turns", () => {
+    const call: ToolCall = { function: { name: "search_files", arguments: { query: "duty" } } };
+    expect(
+      buildHistory([
+        msg(1, "user", "find duty"),
+        msg(2, "assistant", "", { toolCalls: [call] }),
+        msg(3, "tool", "client/main.lua:1", { toolName: "search_files" }),
+        msg(4, "assistant", "It is in client/main.lua"),
+        msg(5, "user", "thanks"),
+      ]),
+    ).toEqual([
+      { role: "user", content: "find duty" },
+      { role: "assistant", content: "", tool_calls: [call] },
+      { role: "tool", content: "client/main.lua:1", tool_name: "search_files" },
+      { role: "assistant", content: "It is in client/main.lua" },
+      { role: "user", content: "thanks" },
+    ]);
+  });
+});
+
+describe("tool use", () => {
+  beforeEach(() => {
+    registerWorkspaceTools(getServices().tools);
+    useProjectStore.setState({ project: { path: "C:\\Projects\\demo", name: "demo", status: "available" } });
+    fakes.ws.files.set("client/main.lua", "RegisterCommand('duty', function() end)\n");
+  });
+
+  it("offers tools, runs the requested tool, and sends the result back to the model", async () => {
+    await chat().send("Which file handles the duty command?");
+    await waitFor(() => expect(fakes.provider.streams).toHaveLength(1));
+    const first = fakes.provider.lastStream();
+    expect(first.tools?.length).toBeGreaterThan(0);
+    expect(first.messages[0]?.role).toBe("system");
+    expect(first.messages[0]?.content).toContain("Project: demo");
+
+    first.callTool("search_files", { query: "RegisterCommand" });
+    first.complete();
+
+    await waitFor(() => expect(fakes.provider.streams).toHaveLength(2));
+    const second = fakes.provider.lastStream();
+    const toolTurn = second.messages.at(-1)!;
+    expect(toolTurn.role).toBe("tool");
+    expect(toolTurn.tool_name).toBe("search_files");
+    expect(toolTurn.content).toContain("client/main.lua:1");
+    expect(second.messages.at(-2)?.tool_calls?.[0]?.function.name).toBe("search_files");
+
+    second.emit({ type: "content", text: "It's registered in client/main.lua." });
+    second.complete();
+    await waitForGenerationEnd();
+
+    expect(fakes.conversations.messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant"]);
+    expect(fakes.conversations.messages[1]?.toolCalls?.[0]?.function.name).toBe("search_files");
+    expect(fakes.conversations.messages[2]?.toolName).toBe("search_files");
+    expect(useActivityStore.getState().activities.some((a) => a.title.startsWith('Searching project for "RegisterCommand"'))).toBe(true);
+  });
+
+  it("falls back to plain chat when the model does not support tools", async () => {
+    await chat().send("hello");
+    await waitFor(() => expect(fakes.provider.streams).toHaveLength(1));
+    fakes.provider.lastStream().fail(new VinnieError("tools_unsupported", "gemma does not support tools"));
+    await waitFor(() => expect(fakes.provider.streams).toHaveLength(2));
+    expect(fakes.provider.lastStream().tools).toBeUndefined();
+    expect(chat().notice).toMatch(/doesn't support tools/);
+    fakes.provider.lastStream().emit({ type: "content", text: "Hi!" });
+    fakes.provider.lastStream().complete();
+    await waitForGenerationEnd();
+    expect(chat().error).toBeNull();
+  });
+
+  it("does not offer tools without a project", async () => {
+    useProjectStore.setState({ project: null });
+    await chat().send("hello");
+    await waitFor(() => expect(fakes.provider.streams).toHaveLength(1));
+    expect(fakes.provider.lastStream().tools).toBeUndefined();
+    expect(fakes.provider.lastStream().messages[0]?.content).toContain("No project folder is selected");
+  });
+
+  it("stops at the tool-round limit", async () => {
+    await chat().send("loop forever");
+    for (let i = 0; i <= MAX_TOOL_ROUNDS; i++) {
+      await waitFor(() => expect(fakes.provider.streams).toHaveLength(i + 1));
+      const s = fakes.provider.lastStream();
+      s.callTool("get_project_structure", {});
+      s.complete();
+    }
+    await waitForGenerationEnd();
+    expect(fakes.provider.streams).toHaveLength(MAX_TOOL_ROUNDS + 1);
+    expect(chat().error?.error.message).toMatch(/Stopped after/);
+  });
+
+  it("stopping denies pending approvals", async () => {
+    fakes.ws.files.set("a.lua", "x");
+    await chat().send("edit a.lua");
+    await waitFor(() => expect(fakes.provider.streams).toHaveLength(1));
+    const s = fakes.provider.lastStream();
+    s.callTool("write_file", { path: "a.lua", content: "y" });
+    s.complete();
+    await waitFor(() => expect(useApprovalStore.getState().pending).toHaveLength(1));
+    await chat().stop();
+    await waitForGenerationEnd();
+    expect(fakes.ws.files.get("a.lua")).toBe("x");
+    expect(useApprovalStore.getState().pending).toHaveLength(0);
   });
 });

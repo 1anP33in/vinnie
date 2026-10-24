@@ -1,33 +1,99 @@
 # Vinnie
 
-Vinnie is a local-first AI desktop application for Windows. It chats with models running in
-[Ollama](https://ollama.com) on your own machine and keeps your conversations in a local SQLite
-database. No cloud services or API keys are involved.
+Vinnie is a local-first AI developer assistant for Windows. It chats with models running in
+[Ollama](https://ollama.com) on your own machine, and it can work inside a project folder: browse,
+search, and read files, propose edits as reviewable diffs, run development commands, and install
+dependencies. Every action needs your approval or permission, and every change can be reverted.
+No cloud services or API keys are involved.
 
-This is **Phase 1: Desktop Foundation**: a polished, reliable chat application with clean extension
-points for the agent features planned in later phases (project indexing, tools, MCP, and an animated
-ice-dragon viewer). None of those future features is simulated in the UI.
+| Phase | Status | Scope |
+| --- | --- | --- |
+| 1. Desktop foundation | Done | Chat with Ollama, streaming, conversations, settings, project selection |
+| 2. Project intelligence and developer tools | Done | Explorer, editor, search, diffs, change history, terminal, dependency management, tool use |
+| 3. Autonomous planning | Planned | Multi-step task planning and execution |
+| 4. MCP and skills | Planned | External tool servers and native skills |
+| 5. Ice dragon viewer | Planned | Animated 3D dragon driven by real agent events |
 
 ## Features
 
-- **Local chat with Ollama**: token-by-token streaming, stop generation, retry, and friendly errors
-  for an unreachable server, timeouts, missing models, malformed responses, and dropped connections.
-- **Reasoning models**: the "thinking" output of models such as `qwen3` is shown in a collapsible
-  panel (can be turned off).
-- **Model management**: discovers installed models, lets you pick one, refreshes the list, and
-  explains how to install one when none exist. Vinnie never downloads models itself.
-- **Conversations**: persisted in SQLite, grouped by date, searchable (titles and content), with
-  rename and delete (with confirmation), automatic titles, and restored after restart.
-- **Safe rendering**: Markdown (GFM tables and lists), syntax-highlighted code blocks with copy
-  buttons. Raw HTML is never rendered, code is never executed, remote images are never loaded,
-  and links open in your browser only if they are `http(s)`.
-- **Project folder**: pick a folder with the native dialog. The choice persists, and moved or
-  deleted folders are detected. Phase 1 never reads or modifies the folder's contents.
-- **Settings**: Ollama endpoint (validated) with a connection test, default model, theme
-  (dark/light/system), reduced visual effects, show reasoning, startup behavior, delete all
-  conversations, and diagnostics.
-- **Resilience**: automatic reconnect while Ollama is offline, partial responses kept when a
-  generation is stopped or fails, and a message is only shown as saved once SQLite confirms it.
+### Chat (Phase 1)
+- Token-by-token streaming from Ollama, with Stop and Retry.
+- Clear errors for an unreachable server, timeouts, missing models, and dropped connections.
+- Conversations persisted in SQLite: grouped by date, searchable, renamable, deletable (with confirmation).
+- Safe Markdown rendering with highlighted code blocks. Raw HTML is never rendered, code is never
+  executed, and remote images are never loaded.
+- A collapsible reasoning panel for thinking models such as `qwen3`.
+
+### Workspace (Phase 2)
+- **Project explorer**: lazily loaded tree, file icons, git decorations (M/U), and ignored folders
+  shown dimmed. You can create, rename, and delete files and folders; deletion asks for confirmation.
+- **Project analysis** (runs in the background when a project is selected) detects:
+  - project types (FiveM resource, Node.js, React, Python, C#, Rust, Go, static site), languages,
+    and frameworks;
+  - package managers, entry points, config files, the README, and instruction files
+    (`AGENTS.md`, `CLAUDE.md`, ...);
+  - Git branch and changes;
+  - for FiveM: `fxmanifest.lua` / `__resource.lua` scripts, `ui_page`, and files.
+- **Code editor** (Monaco): tabs, syntax highlighting, line numbers, find (Ctrl+F), copy, reload, and
+  save (Ctrl+S). Each tab shows its status: *Saved*, *Modified*, or *External modification detected*.
+  If a file changes on disk while you have unsaved edits, Vinnie never overwrites them. You can
+  compare the two versions, use the disk version, or deliberately overwrite.
+- **Search**: by file name or text, with case-sensitive, regex, and file-type filters. It respects
+  `.gitignore` and the ignored folders. Clicking a result opens the file at that line.
+- **Change manager**: every edit made through Vinnie (by you or the assistant) is snapshotted. You can
+  view any change as a diff, revert one change, revert all changes from one assistant task, or browse a
+  file's previous versions. A revert refuses to discard edits made after the change unless you confirm.
+- **Terminal**: runs commands in the project folder and streams stdout and stderr. Each run shows the
+  start time, status, exit code, and duration, and supports Stop, a timeout, Clear, and command
+  history. When a command fails, Vinnie explains the likely cause (for example *Cannot find module
+  'express'*, a port already in use, or a missing tool) and keeps the raw output behind a toggle.
+- **Dependencies**: Vinnie detects npm, pnpm, yarn, bun, pip, uv, poetry, pipenv, cargo, dotnet, and
+  go. When the evidence conflicts or is missing (for example, several lockfiles), it says so and lets
+  you choose.
+- **Tool use in chat**: the model can call `get_project_structure`, `search_files`, `read_file`,
+  `create_file`, `write_file`, `delete_file`, `move_file`, `run_command`, and `install_dependency`.
+  - The app executes each call according to your permissions and approvals, returns the result to the
+    model, and the model answers.
+  - This is a bounded cycle (at most 8 tool rounds per message), not an autonomous loop.
+  - Tool calls, results, and approvals appear in the chat and in the activity feed.
+- **Project context**: each request carries a compact summary instead of the whole project: detected
+  metadata, a shallow tree, the file open in the editor, and file names that match your message.
+- **Activity feed**: lists real operations only (searches, reads, edits, commands, analysis,
+  approvals), each with a timestamp, status, duration, and details.
+- **Dragon events**: `dragon.idle`, `thinking`, `reading`, `editing`, `running`, `waiting`, `error`,
+  and `success`. They drive the status indicator now and will drive the Phase 5 dragon later.
+
+## Security model
+
+All enforcement happens in the Rust backend. Neither the model nor the UI can bypass it.
+
+- **Workspace boundary**: every path is relative to the project root.
+  - Absolute paths, drive letters, `..`, alternate data streams, and reserved device names are rejected.
+  - Paths are resolved to their real location (following symlinks and junctions), so links cannot
+    escape the project.
+- **Command policy**: commands run without a shell (no pipes, redirects, `&&`, or variables). Each
+  command falls into one of three levels:
+  - **Low risk**, runs directly: `npm test`, `npm run build/lint/test`, `git status/diff/log`,
+    `cargo test`, version checks, and similar.
+  - **Approval required**: installs, `git checkout/reset/commit/push`, unknown programs, and anything
+    else not on the low-risk list.
+  - **Blocked**: `rm`, `del`, `rmdir`, `format`, `diskpart`, `shutdown`, `reg`, `git clean`, and
+    shells such as `cmd`, `powershell`, or `bash` (which would bypass the policy). The resolved
+    executable is checked again after `PATH` lookup.
+
+  Programs are found through `PATH` only, never the project folder, so a planted `git.exe` cannot
+  hijack a command.
+- **Permissions** (Settings): READ = allowed, WRITE = ask, EXECUTE = ask, INSTALL_DEPENDENCIES = ask
+  by default. Each can be set to *Allowed*, *Ask me*, or *Never*.
+  - Deleting files always asks.
+  - Reading likely-secret files (`.env`, keys, `server.cfg`) always asks.
+  - "Always allow" stores the exact command per project, separately from conversations.
+- **Frontend capabilities**: the window can call only Vinnie's own commands. Dialog, link-opening, and
+  clipboard plugins are not exposed to it.
+- **Logging**: logs record events, tool use, commands, and errors, never message or file contents.
+  Settings → *Open log folder*.
+- **Note**: approvals are made in Vinnie's own UI, and the backend requires an explicit approval flag
+  for gated operations. The model has no direct access to commands, so it cannot set that flag.
 
 ## Requirements
 
@@ -36,12 +102,12 @@ ice-dragon viewer). None of those future features is simulated in the UI.
 | Windows | 10/11 x64 | WebView2 runtime (preinstalled on Windows 11) |
 | Node.js | 20.19+ (tested on 24.19) | |
 | pnpm | 12.15 (pinned via `packageManager`) | `corepack enable pnpm` |
-| Rust | stable, 1.85+ (tested on 1.99.1) | install with [rustup](https://rustup.rs), MSVC toolchain |
+| Rust | stable, 1.85+ (tested on 1.99.1) | [rustup](https://rustup.rs), MSVC toolchain |
 | Visual Studio C++ Build Tools | 2022 or newer | "Desktop development with C++" workload |
 | Ollama | any recent version (tested on 0.35.1) | must be running for chat |
+| Git | optional | enables Git status in the explorer |
 
-If `corepack enable` fails with a permissions error (it writes to `Program Files`), install the
-shim into your user npm folder instead:
+If `corepack enable` fails with a permissions error, install the shim into your user npm folder:
 
 ```bash
 corepack enable pnpm --install-directory "%APPDATA%\npm"
@@ -57,14 +123,14 @@ pnpm install
 pnpm app:dev
 ```
 
-`pnpm app:dev` starts Vite and the Tauri shell with hot reload. The first Rust build takes a few
-minutes.
-
-Install at least one model in Ollama, for example:
+Install at least one model with tool support, for example:
 
 ```bash
 ollama pull qwen3:8b
 ```
+
+Then choose a project folder (Explorer → *Choose folder…*) and ask something like *"Which files handle
+the duty command?"* or *"Run the tests and explain any failures."*
 
 ### Production build
 
@@ -72,99 +138,108 @@ ollama pull qwen3:8b
 pnpm app:build
 ```
 
-This produces `src-tauri/target/release/vinnie.exe` and an NSIS installer under
-`src-tauri/target/release/bundle/nsis/`. On first use, the Tauri bundler downloads NSIS.
+This produces `src-tauri/target/release/vinnie.exe` and an installer at
+`src-tauri/target/release/bundle/nsis/Vinnie_0.1.0_x64-setup.exe`.
 
 ## Checks
 
 | Command | What it runs |
 | --- | --- |
-| `pnpm test` | Vitest + React Testing Library (Ollama and Tauri fully mocked) |
+| `pnpm test` | Vitest + React Testing Library (147 tests; Ollama, Tauri, and Monaco mocked) |
 | `pnpm typecheck` | TypeScript, strict mode |
-| `pnpm lint` | ESLint (typescript-eslint, react-hooks) |
+| `pnpm lint` | ESLint |
 | `pnpm build` | Production frontend build |
-| `pnpm rust:test` | Rust unit tests, including a scripted mock Ollama HTTP server |
+| `pnpm rust:test` | Rust tests (131), including a mock Ollama server, real file I/O, junction escapes, and process timeouts |
 | `pnpm rust:clippy` | Clippy with warnings as errors |
 | `pnpm check` | All of the above |
 
-No test needs a running Ollama.
-
 ## Architecture
 
-```
-src-tauri/                     Rust backend (Tauri 2)
-  build.rs                     registers app commands -> generated allow-* permissions
-  capabilities/default.json    the only permissions granted to the window
-  src/
-    lib.rs                     app setup, plugins, command registration
-    commands/                  thin IPC handlers: validate input, delegate
-      app.rs chat.rs conversations.rs project.rs settings.rs
-    ollama/                    Ollama provider
-      client.rs                HTTP client, timeouts, cancellation, error mapping
-      stream.rs                incremental NDJSON decoder
-      types.rs                 wire + UI types
-      test_server.rs           scripted mock server (tests only)
-    db/                        SQLite: migrations, conversation repository, key/value
-    settings.rs                settings model + validation
-    project.rs                 active project folder (metadata only)
-    generation.rs              cancellation registry for in-flight generations
-    error.rs                   typed errors serialized as { kind, message }
-
-src/                           React + TypeScript frontend
-  lib/ipc/                     the only code that calls Tauri (typed commands + DTOs)
-  providers/                   AIProvider interface + Ollama implementation
-  repositories/                ConversationRepository interface + Tauri implementation
-  project/                     ProjectProvider + Phase 2 WorkspaceProvider types
-  agent/                       ToolRegistry + AgentEvent types (empty registry in Phase 1)
-  services/                    service locator (swapped for fakes in tests)
-  state/                       Zustand stores; chatStore orchestrates send/stream/persist
-  components/                  layout, sidebar, chat, settings, common UI
-  settings/validation.ts       client-side mirror of backend validation
-  test/fakes.ts                in-memory fakes for every service
+```text
+Vinnie Desktop App (React + TypeScript)
+├── Chat UI ─────────────┐   Explorer · Editor (Monaco) · Diff viewer
+├── Terminal · Activity  │   Search · Changes · Approval cards · Dragon status
+│                        ▼
+├── Stores (Zustand): chat orchestration, editor, workspace, search, terminal,
+│                     changes, approvals, activity, dragon
+├── Agent layer: ToolRegistry + 9 VinnieTools (zod-validated), project context,
+│                text tool-call recovery, dragon event bus
+└── Services (interfaces) ── typed IPC ──▶ Tauri commands (validated, permission-checked)
+                                            │
+Rust backend                                ▼
+├── workspace/   path boundary · file service · search service (ignore + regex)
+├── changes      snapshots · diffs (similar) · revert · history (SQLite)
+├── process/     command policy · process runner (streaming, timeout, cancel, kill tree)
+├── permissions  READ / WRITE / EXECUTE / INSTALL_DEPENDENCIES
+├── deps         package-manager detection · install commands
+├── analyzer     project types · languages · FiveM manifest · entry points
+├── git          read-only status
+├── db/          SQLite migrations · conversations · settings
+└── ollama/      streaming client · tool calls
 ```
 
-### Key design decisions
+```text
+src/
+  agent/          tool interface, registry, tools/, context builder, events
+  components/     chat, editor, explorer, search, changes, terminal, activity, layout, settings
+  services/       one interface per backend service (swapped for fakes in tests)
+  state/          Zustand stores
+  lib/ipc/        the only code that calls Tauri
+src-tauri/src/
+  commands/       IPC handlers: app, chat, conversations, project, settings,
+                  workspace, changes, process, analysis
+  workspace/ changes.rs process/ permissions.rs deps.rs analyzer.rs git.rs db/ ollama/
+```
 
-- **Privileged work stays in Rust.** All network, filesystem, and dialog access runs in the
-  backend. The window has no plugin permissions at all: it can only call Vinnie's own commands
-  (`capabilities/default.json`). The folder picker, link opening, and clipboard writes are
-  commands that validate their inputs. There is no shell execution.
-- **Streaming** uses a Tauri `Channel`. The backend decodes Ollama's NDJSON incrementally (handling
-  lines and UTF-8 characters split across network chunks) and forwards `content` and `thinking`
-  events. The frontend batches tokens into React state every 40 ms to stay responsive.
-- **Cancellation**: each generation registers a `CancellationToken`. Stopping drops the HTTP
-  response, which tells Ollama to stop generating. Timeouts: 5 s to connect, 5 minutes for the first
-  response (model loading), and 2 minutes of silence between chunks.
-- **Persistence honesty**: the user message is saved before generation starts. If that fails, the
-  draft is restored and nothing is sent. Assistant replies are saved as `complete`, or as
-  `interrupted` (stopped or failed partway) with the partial text. If saving fails, the reply stays
-  on screen marked "Not saved" with a retry button.
-- **Provider abstraction**: the chat UI depends only on `AIProvider`
-  (`checkConnection`, `listModels`, `streamChat`), so another provider can be added without
-  touching the chat interface.
-- **Logging** goes to the app log folder (shown in Settings) and records events and errors,
-  never message contents.
+### New dependencies in Phase 2
+
+- **Frontend:** `monaco-editor` 0.55.1, `@monaco-editor/react` 4.7.0, `react-resizable-panels` 3.0.6,
+  `zod` 4.6.7.
+- **Rust:** `ignore`, `globset`, `regex`, `similar`, `sha2`, `dunce`, `which`, and
+  `tauri-plugin-clipboard-manager`.
 
 ### Data locations
 
-- Database: `%APPDATA%\ai.vinnie.desktop\vinnie.db`
+- Database: `%APPDATA%\ai.vinnie.desktop\vinnie.db` (conversations, settings, change snapshots,
+  allowed commands, project metadata)
 - Logs: `%LOCALAPPDATA%\ai.vinnie.desktop\logs\vinnie.log`
 
 ## Keyboard shortcuts
 
 | Keys | Action |
 | --- | --- |
-| Enter | Send message |
-| Shift+Enter | New line |
+| Enter / Shift+Enter | Send message / new line |
 | Ctrl+N | New conversation |
+| Ctrl+S | Save file |
+| Ctrl+F | Find in file |
+| Ctrl+` | Toggle terminal and activity panel |
+| Ctrl+Shift+E / Ctrl+Shift+F | Explorer / Search |
 | Ctrl+, | Settings |
 
-## Known limitations (Phase 1)
+## Known limitations
 
-- Vinnie does not read project files yet; the project folder is only remembered.
-- No system prompt or per-model generation options (temperature, context length) yet; Ollama
-  defaults apply.
-- The whole conversation history is sent on every turn; very long conversations are limited by the
-  model's context window.
-- Search uses SQL `LIKE`, which is case-insensitive for ASCII only.
-- Conversations cannot be exported yet.
+- Commands are not interactive (stdin is closed). Commands that prompt for input wait until they
+  time out or you stop them.
+- Only files and empty folders can be deleted. Snapshots are limited to 10 MB per file, and the
+  editor opens files up to 2 MB.
+- The editor checks for external changes every 3 seconds and when the window gains focus. There is no
+  file watcher yet.
+- Small local models vary in how reliably they call tools. `qwen3:8b` worked well in testing;
+  `qwen2.5-coder:7b` sometimes formats calls as text, which Vinnie recovers when the whole reply is a
+  call.
+- Project detection relies on file names and manifests. It describes evidence; it does not fully
+  understand the project.
+- Change history is a local snapshot store. Git-backed history is not implemented yet.
+
+## Recommended Phase 3 plan
+
+1. **Task model**: explicit tasks with goals, a visible step-by-step plan, a status for each step, and
+   cancellation. Reuse the existing `taskId` that already groups changes.
+2. **Planner/executor loop** with budgets (steps, time, tokens), retries, and a checkpoint before
+   destructive steps. Keep the permission checks in the backend unchanged.
+3. **Verification steps**: after edits, run the project's detected test and build commands and feed
+   failures (with diagnoses) back into the plan.
+4. **Better retrieval**: an incremental index (symbols and chunks) so context selection goes beyond
+   file names.
+5. **Git integration** for the change manager (stash/branch per task, diff against HEAD).
+6. **Per-project permission profiles** and an audit log view.

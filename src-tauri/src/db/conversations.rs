@@ -27,6 +27,8 @@ pub enum Role {
     User,
     Assistant,
     System,
+    /// Result of a tool call, sent back to the model.
+    Tool,
 }
 
 impl Role {
@@ -35,6 +37,7 @@ impl Role {
             Role::User => "user",
             Role::Assistant => "assistant",
             Role::System => "system",
+            Role::Tool => "tool",
         }
     }
 
@@ -43,6 +46,7 @@ impl Role {
             "user" => Some(Role::User),
             "assistant" => Some(Role::Assistant),
             "system" => Some(Role::System),
+            "tool" => Some(Role::Tool),
             _ => None,
         }
     }
@@ -78,7 +82,7 @@ impl MessageStatus {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
     pub id: i64,
@@ -89,6 +93,10 @@ pub struct Message {
     pub status: MessageStatus,
     pub model: Option<String>,
     pub error: Option<String>,
+    /// Tool calls requested by an assistant message (Ollama format).
+    pub tool_calls: Option<serde_json::Value>,
+    /// For `tool` messages: which tool produced the content.
+    pub tool_name: Option<String>,
     pub created_at: i64,
 }
 
@@ -106,6 +114,10 @@ pub struct NewMessage {
     pub model: Option<String>,
     #[serde(default)]
     pub error: Option<String>,
+    #[serde(default)]
+    pub tool_calls: Option<serde_json::Value>,
+    #[serde(default)]
+    pub tool_name: Option<String>,
 }
 
 /// Collapse whitespace and enforce length limits on a user-visible title.
@@ -159,6 +171,10 @@ fn map_message(row: &Row<'_>) -> rusqlite::Result<Message> {
         status: MessageStatus::parse(&status).unwrap_or_default(),
         model: row.get("model")?,
         error: row.get("error")?,
+        tool_calls: row
+            .get::<_, Option<String>>("tool_calls")?
+            .and_then(|raw| serde_json::from_str(&raw).ok()),
+        tool_name: row.get("tool_name")?,
         created_at: row.get("created_at")?,
     })
 }
@@ -279,7 +295,7 @@ pub fn list_messages(conn: &Connection, conversation_id: &str) -> AppResult<Vec<
         return Err(AppError::not_found("That conversation no longer exists."));
     }
     let mut stmt = conn.prepare(
-        "SELECT id, conversation_id, role, content, thinking, status, model, error, created_at
+        "SELECT id, conversation_id, role, content, thinking, status, model, error, tool_calls, tool_name, created_at
          FROM messages WHERE conversation_id = ?1 ORDER BY id ASC",
     )?;
     let rows = stmt.query_map(params![conversation_id], map_message)?;
@@ -300,6 +316,32 @@ pub fn add_message(conn: &mut Connection, new: &NewMessage) -> AppResult<Message
     if new.role == Role::User && new.content.trim().is_empty() {
         return Err(AppError::validation("A message cannot be empty."));
     }
+    let tool_calls = match &new.tool_calls {
+        Some(calls) if new.role == Role::Assistant => {
+            let raw = serde_json::to_string(calls)
+                .map_err(|_| AppError::validation("Invalid tool calls."))?;
+            if raw.len() > MAX_MESSAGE_BYTES {
+                return Err(AppError::validation(
+                    "The tool calls are too large to save.",
+                ));
+            }
+            Some(raw)
+        }
+        Some(_) => {
+            return Err(AppError::validation(
+                "Only assistant messages can have tool calls.",
+            ))
+        }
+        None => None,
+    };
+    if let Some(name) = &new.tool_name {
+        let valid = !name.is_empty()
+            && name.len() <= 64
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !valid || new.role != Role::Tool {
+            return Err(AppError::validation("Invalid tool name."));
+        }
+    }
 
     let tx = conn.transaction()?;
     let exists: bool = tx
@@ -316,8 +358,9 @@ pub fn add_message(conn: &mut Connection, new: &NewMessage) -> AppResult<Message
 
     let now = now_ms();
     tx.execute(
-        "INSERT INTO messages (conversation_id, role, content, thinking, status, model, error, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO messages (conversation_id, role, content, thinking, status, model, error,
+             tool_calls, tool_name, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             new.conversation_id,
             new.role.as_str(),
@@ -326,6 +369,8 @@ pub fn add_message(conn: &mut Connection, new: &NewMessage) -> AppResult<Message
             new.status.as_str(),
             new.model,
             new.error,
+            tool_calls,
+            new.tool_name,
             now
         ],
     )?;
@@ -337,7 +382,7 @@ pub fn add_message(conn: &mut Connection, new: &NewMessage) -> AppResult<Message
         params![new.conversation_id, now, new.model],
     )?;
     let message = tx.query_row(
-        "SELECT id, conversation_id, role, content, thinking, status, model, error, created_at
+        "SELECT id, conversation_id, role, content, thinking, status, model, error, tool_calls, tool_name, created_at
          FROM messages WHERE id = ?1",
         params![id],
         map_message,
@@ -361,6 +406,8 @@ mod tests {
             status: MessageStatus::Complete,
             model: None,
             error: None,
+            tool_calls: None,
+            tool_name: None,
         }
     }
 
@@ -442,6 +489,8 @@ mod tests {
                 status: MessageStatus::Interrupted,
                 model: Some("qwen3:8b".into()),
                 error: None,
+                tool_calls: None,
+                tool_name: None,
             },
         )
         .unwrap();
@@ -463,6 +512,38 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn stores_tool_calls_and_tool_results() {
+        let db = Database::open_in_memory().unwrap();
+        let mut conn = db.conn().unwrap();
+        let c = create(&conn, "Tools", None).unwrap();
+        let calls = serde_json::json!([{"function": {"name": "read_file", "arguments": {"path": "a.lua"}}}]);
+        let mut assistant = user(&c.id, "");
+        assistant.role = Role::Assistant;
+        assistant.tool_calls = Some(calls.clone());
+        add_message(&mut conn, &assistant).unwrap();
+        let mut tool = user(&c.id, "file contents");
+        tool.role = Role::Tool;
+        tool.tool_name = Some("read_file".into());
+        add_message(&mut conn, &tool).unwrap();
+
+        let messages = list_messages(&conn, &c.id).unwrap();
+        assert_eq!(messages[0].tool_calls.as_ref(), Some(&calls));
+        assert_eq!(messages[1].role, Role::Tool);
+        assert_eq!(messages[1].tool_name.as_deref(), Some("read_file"));
+
+        let mut bad = user(&c.id, "x");
+        bad.tool_calls = Some(calls);
+        assert!(
+            add_message(&mut conn, &bad).is_err(),
+            "users cannot carry tool calls"
+        );
+        let mut bad_name = user(&c.id, "x");
+        bad_name.role = Role::Tool;
+        bad_name.tool_name = Some("rm -rf".into());
+        assert!(add_message(&mut conn, &bad_name).is_err());
     }
 
     #[test]

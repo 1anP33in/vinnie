@@ -1,16 +1,35 @@
-import { PanelLeftClose, PanelLeftOpen, Plus, Search, Settings as SettingsIcon, X } from "lucide-react";
+import {
+  FolderTree,
+  GitCompareArrows,
+  MessagesSquare,
+  Plus,
+  Search,
+  Settings as SettingsIcon,
+  SquareTerminal,
+  X,
+} from "lucide-react";
 import { useEffect, useState } from "react";
+import { ChangesPanel } from "@/components/changes/ChangesPanel";
 import { IconButton } from "@/components/common/Button";
 import { Logo } from "@/components/common/Logo";
+import { ExplorerPanel } from "@/components/explorer/ExplorerPanel";
+import { SearchPanel } from "@/components/search/SearchPanel";
 import { useConversationStore } from "@/state/conversationStore";
 import { useSettingsStore } from "@/state/settingsStore";
-import { useUiStore } from "@/state/uiStore";
+import { useUiStore, type SideView } from "@/state/uiStore";
 import { ConversationList } from "./ConversationList";
 import { ProjectSelector } from "./ProjectSelector";
 
 const SEARCH_DEBOUNCE_MS = 200;
 
-function SearchBox() {
+const VIEWS: { view: SideView; label: string; icon: typeof FolderTree; shortcut: string }[] = [
+  { view: "chats", label: "Conversations", icon: MessagesSquare, shortcut: "" },
+  { view: "explorer", label: "Explorer", icon: FolderTree, shortcut: "Ctrl+Shift+E" },
+  { view: "search", label: "Search", icon: Search, shortcut: "Ctrl+Shift+F" },
+  { view: "changes", label: "Changes", icon: GitCompareArrows, shortcut: "" },
+];
+
+function ConversationSearch() {
   const search = useConversationStore((s) => s.search);
   const [value, setValue] = useState("");
 
@@ -45,78 +64,98 @@ function SearchBox() {
   );
 }
 
-export function Sidebar() {
-  const collapsed = useSettingsStore((s) => s.settings.sidebarCollapsed);
-  const setCollapsed = useSettingsStore((s) => s.setSidebarCollapsed);
+function ChatsPanel() {
   const startNew = useConversationStore((s) => s.startNew);
-  const view = useUiStore((s) => s.view);
   const setView = useUiStore((s) => s.setView);
-
-  const newConversation = () => {
-    setView("chat");
-    startNew();
-  };
-
-  if (collapsed) {
-    return (
-      <aside className="frost flex w-14 shrink-0 flex-col items-center gap-1 border-r border-border bg-bg-elevated py-3">
-        <Logo size={26} />
-        <div className="mt-3 flex flex-col gap-1">
-          <IconButton label="Expand sidebar" onClick={() => void setCollapsed(false)}>
-            <PanelLeftOpen size={16} />
-          </IconButton>
-          <IconButton label="New conversation" onClick={newConversation}>
-            <Plus size={16} />
-          </IconButton>
-        </div>
-        <div className="flex-1" />
-        <ProjectSelector collapsed />
-        <IconButton label="Settings" active={view === "settings"} onClick={() => setView("settings")}>
-          <SettingsIcon size={16} />
-        </IconButton>
-      </aside>
-    );
-  }
-
   return (
-    <aside className="frost flex w-68 shrink-0 flex-col border-r border-border bg-bg-elevated">
-      <div className="flex items-center gap-2.5 px-4 pb-3 pt-4">
-        <Logo size={26} />
-        <span className="text-[15px] font-semibold tracking-tight">Vinnie</span>
-        <div className="flex-1" />
-        <IconButton label="Collapse sidebar" onClick={() => void setCollapsed(true)}>
-          <PanelLeftClose size={16} />
-        </IconButton>
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col">
       <div className="px-3 pb-3">
         <button
           type="button"
-          onClick={newConversation}
+          onClick={() => {
+            setView("chat");
+            startNew();
+          }}
           className="flex h-9 w-full items-center gap-2 rounded-md border border-border-strong bg-surface px-3 text-sm font-medium transition-colors hover:border-accent/50 hover:bg-surface-2"
         >
           <Plus size={15} className="text-accent" /> New conversation
           <kbd className="ml-auto font-sans text-[11px] text-faint">Ctrl+N</kbd>
         </button>
       </div>
-      <SearchBox />
+      <ConversationSearch />
       <div className="mt-3 flex min-h-0 flex-1 flex-col">
         <ConversationList />
       </div>
-      <div className="flex flex-col gap-2 border-t border-border py-3">
+      <div className="border-t border-border py-3">
         <ProjectSelector collapsed={false} />
-        <div className="px-2">
-          <button
-            type="button"
-            onClick={() => setView("settings")}
-            aria-current={view === "settings" ? "page" : undefined}
-            className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors ${
-              view === "settings" ? "bg-surface-3 text-text" : "text-muted hover:bg-surface-2 hover:text-text"
-            }`}
-          >
-            <SettingsIcon size={15} /> Settings
-          </button>
-        </div>
       </div>
+    </div>
+  );
+}
+
+/** Narrow icon rail on the far left. */
+export function ActivityRail() {
+  const collapsed = useSettingsStore((s) => s.settings.sidebarCollapsed);
+  const setCollapsed = useSettingsStore((s) => s.setSidebarCollapsed);
+  const sideView = useUiStore((s) => s.sideView);
+  const setSideView = useUiStore((s) => s.setSideView);
+  const view = useUiStore((s) => s.view);
+  const setView = useUiStore((s) => s.setView);
+  const bottomOpen = useUiStore((s) => s.bottomOpen);
+  const toggleBottom = useUiStore((s) => s.toggleBottom);
+
+  const select = (v: SideView) => {
+    if (v === sideView && !collapsed) {
+      void setCollapsed(true);
+    } else {
+      setSideView(v);
+      if (collapsed) void setCollapsed(false);
+    }
+  };
+
+  return (
+    <nav aria-label="Views" className="frost flex w-12 shrink-0 flex-col items-center gap-1 border-r border-border bg-bg-elevated py-3">
+      <Logo size={24} className="mb-3" />
+      {VIEWS.map(({ view: v, label, icon: Icon, shortcut }) => (
+        <IconButton
+          key={v}
+          label={shortcut ? `${label} (${shortcut})` : label}
+          active={sideView === v && !collapsed}
+          onClick={() => select(v)}
+          className="size-9"
+        >
+          <Icon size={18} />
+        </IconButton>
+      ))}
+      <div className="flex-1" />
+      <IconButton label="Terminal & activity (Ctrl+`)" active={bottomOpen} onClick={toggleBottom} className="size-9">
+        <SquareTerminal size={18} />
+      </IconButton>
+      <IconButton
+        label="Settings (Ctrl+,)"
+        active={view === "settings"}
+        onClick={() => setView(view === "settings" ? "chat" : "settings")}
+        className="size-9"
+      >
+        <SettingsIcon size={18} />
+      </IconButton>
+    </nav>
+  );
+}
+
+/** The panel next to the rail: explorer, search, changes, or conversations. */
+export function SidePanel() {
+  const sideView = useUiStore((s) => s.sideView);
+  const title = VIEWS.find((v) => v.view === sideView)?.label ?? "";
+  return (
+    <aside aria-label={title} className="flex h-full min-w-0 flex-col border-r border-border bg-bg-elevated">
+      <div className="flex h-10 shrink-0 items-center px-4 text-[11px] font-semibold uppercase tracking-wider text-faint">
+        {title}
+      </div>
+      {sideView === "explorer" && <ExplorerPanel />}
+      {sideView === "search" && <SearchPanel />}
+      {sideView === "changes" && <ChangesPanel />}
+      {sideView === "chats" && <ChatsPanel />}
     </aside>
   );
 }

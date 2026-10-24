@@ -41,12 +41,27 @@ export function useReconnectEffect() {
   }, [status]);
 }
 
-/** Global shortcuts: Ctrl+N (new conversation), Ctrl+, (settings). */
+/**
+ * Global shortcuts: Ctrl+N (new conversation), Ctrl+, (settings),
+ * Ctrl+` (terminal), Ctrl+Shift+E (explorer), Ctrl+Shift+F (search).
+ */
 export function useShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-      if (e.key.toLowerCase() === "n") {
+      const ui = useUiStore.getState();
+      if (e.shiftKey && (e.key === "E" || e.key === "F")) {
+        e.preventDefault();
+        ui.setSideView(e.key === "E" ? "explorer" : "search");
+        void useSettingsStore.getState().setSidebarCollapsed(false);
+        return;
+      }
+      if (e.key === "`") {
+        e.preventDefault();
+        ui.toggleBottom();
+        return;
+      }
+      if (e.key.toLowerCase() === "n" && !e.shiftKey) {
         e.preventDefault();
         useUiStore.getState().setView("chat");
         useConversationStore.getState().startNew();

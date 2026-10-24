@@ -1,54 +1,110 @@
-// Extension points for the future agent (Phases 2–5). Nothing here executes
-// tools in Phase 1; the registry is real but empty, and the UI never shows
-// tools, MCP servers, or agent activity that does not exist.
+// The standardized tool interface. Built-in workspace tools implement it
+// today; MCP tools (Phase 4) will be adapted to the same shape. Tools never
+// bypass the backend: every file, search, and process operation goes through
+// commands that enforce workspace boundaries, the command policy, and the
+// user's permission settings.
 
-/** JSON-schema-like description of a tool's parameters. */
-export interface ToolParameterSchema {
-  type: "object";
-  properties: Record<string, { type: string; description?: string }>;
-  required?: string[];
+import type { z } from "zod";
+import type { ErrorKind } from "@/lib/errors";
+import type {
+  ChangePreview,
+  CommandAssessment,
+  FileOperation,
+  PermissionSettings,
+  RunResult,
+} from "@/lib/ipc/types";
+import type { Services } from "@/services";
+import type { ActivityKind } from "@/state/activityStore";
+
+export type ToolCapability = "read" | "write" | "execute" | "install";
+
+export type ToolResult =
+  | { ok: true; content: string }
+  | { ok: false; error: string; kind?: ErrorKind | "denied" | "invalid_input" | "unknown_tool" };
+
+/** A request shown to the user before a gated action runs. */
+export type ApprovalRequest =
+  | {
+      kind: "command";
+      command: string;
+      workspace: string;
+      cwd: string | null;
+      reason: string | null;
+      assessment: CommandAssessment;
+      install?: {
+        manager: string;
+        packages: string[];
+        candidates: string[];
+        ambiguous: boolean;
+        detectionReason: string;
+      };
+    }
+  | { kind: "file"; operation: FileOperation; preview: ChangePreview; reason: string | null; workspace: string }
+  | { kind: "read"; path: string; reason: string | null; workspace: string };
+
+export interface ApprovalDecision {
+  approved: boolean;
+  /** "Always allow" this exact command in this workspace. */
+  remember?: boolean;
+  /** For ambiguous installs: the package manager the user picked. */
+  manager?: string;
 }
 
-export type ToolPermission = "read-project" | "write-project" | "run-command" | "network";
+export interface CommandRequest {
+  command: string;
+  cwd?: string | null;
+  timeoutSecs?: number | null;
+  approved: boolean;
+  remember: boolean;
+  reason?: string | null;
+}
 
-export interface ToolDefinition {
-  /** Unique, stable name, e.g. `fs.read_file` or `mcp.<server>.<tool>`. */
+export interface ToolContext {
+  /** Groups the changes of one assistant turn so they can be reverted together. */
+  taskId: string;
+  signal: AbortSignal;
+  services: Services;
+  permissions: PermissionSettings;
+  workspaceRoot: string;
+  requestApproval(request: ApprovalRequest): Promise<ApprovalDecision>;
+  /** Run a command through the terminal (so output is visible to the user). */
+  runCommand(request: CommandRequest): Promise<RunResult>;
+  /** Tell the UI which files changed so open editors and the explorer refresh. */
+  filesChanged(paths: string[]): void;
+  /** Ask for the project to be re-analyzed (e.g. after installing dependencies). */
+  projectChanged(): void;
+}
+
+export interface VinnieTool<Input = unknown> {
   name: string;
   description: string;
-  parameters: ToolParameterSchema;
-  /** Permissions the user must grant before the tool may run (Phase 3). */
-  permissions: ToolPermission[];
-  /** Where the tool comes from: built-in or an MCP server (Phase 4). */
-  source: { kind: "native" } | { kind: "mcp"; server: string };
+  /** JSON schema of the input, as sent to the model. */
+  inputSchema: Record<string, unknown>;
+  /** Runtime validator for model-provided input. */
+  schema: z.ZodType<Input>;
+  capability: ToolCapability;
+  activityKind: ActivityKind;
+  /** Short label for the activity feed, e.g. "Reading client/main.lua". */
+  describe(input: Input): string;
+  execute(input: Input, context: ToolContext): Promise<ToolResult>;
 }
 
-export interface ToolCall {
-  id: string;
+export interface ToolDefinition {
   name: string;
-  arguments: Record<string, unknown>;
-}
-
-export type ToolResult = { ok: true; output: string } | { ok: false; error: string };
-
-export interface Tool extends ToolDefinition {
-  execute(args: Record<string, unknown>, signal: AbortSignal): Promise<ToolResult>;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  capability: ToolCapability;
 }
 
 export interface ToolRegistry {
-  register(tool: Tool): void;
+  register<I>(tool: VinnieTool<I>): void;
   unregister(name: string): boolean;
-  get(name: string): Tool | undefined;
+  get(name: string): VinnieTool | undefined;
   list(): ToolDefinition[];
+  /** Tool specs in Ollama's function-calling format. */
+  specs(): object[];
+  /** Validate input and execute; never throws. */
+  execute(name: string, input: unknown, context: ToolContext): Promise<ToolResult>;
 }
 
-/**
- * Events the agent will emit (Phase 3). The ice dragon viewer (Phase 5)
- * subscribes to these so its animations reflect real activity only.
- */
-export type AgentEvent =
-  | { type: "idle" }
-  | { type: "thinking"; requestId: string }
-  | { type: "responding"; requestId: string }
-  | { type: "tool-started"; call: ToolCall }
-  | { type: "tool-finished"; call: ToolCall; result: ToolResult }
-  | { type: "error"; message: string };
+export type { RunResult };

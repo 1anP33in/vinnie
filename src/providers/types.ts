@@ -15,6 +15,8 @@ export type { ChatTurn, ConnectionInfo, GenerationOutcome, ModelInfo, StreamEven
 export interface ChatRequest {
   model: string;
   messages: ChatTurn[];
+  /** Tool definitions the model may call (function-calling format). */
+  tools?: object[];
 }
 
 export interface GenerationHandle {

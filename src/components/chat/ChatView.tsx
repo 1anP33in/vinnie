@@ -6,9 +6,24 @@ import { useChatStore } from "@/state/chatStore";
 import { useConversationStore } from "@/state/conversationStore";
 import { useSettingsStore } from "@/state/settingsStore";
 import { useUiStore } from "@/state/uiStore";
+import { ApprovalCards } from "./ApprovalCard";
 import { Composer } from "./Composer";
 import { MessageList } from "./MessageList";
 import { WelcomeScreen } from "./WelcomeScreen";
+
+function ChatNotice() {
+  const notice = useChatStore((s) => s.notice);
+  const dismiss = useChatStore((s) => s.dismissNotice);
+  if (!notice) return null;
+  return (
+    <div className="mx-auto mb-2 flex w-full max-w-3xl items-center gap-2 px-6 text-xs text-warning" role="status">
+      <span className="flex-1">{notice}</span>
+      <button type="button" onClick={dismiss} className="text-faint hover:text-text">
+        Dismiss
+      </button>
+    </div>
+  );
+}
 
 function ChatErrorBanner() {
   const activeId = useConversationStore((s) => s.activeId);
@@ -80,6 +95,8 @@ export function ChatView() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {body}
+      <ApprovalCards />
+      <ChatNotice />
       <ChatErrorBanner />
       <Composer />
     </div>
