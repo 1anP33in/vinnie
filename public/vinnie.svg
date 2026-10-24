@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="ice" x1="6" y1="6" x2="58" y2="58" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E0F7FF"/>
+      <stop offset="0.55" stop-color="#7DD3FC"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+  </defs>
+  <!-- Faceted ice-dragon head, facing right -->
+  <path d="M33 22 Q22 10 6 6 Q18 14 27 26 Z" fill="#BAE6FD"/>
+  <path d="M28 25 Q16 20 4 21 Q15 25 23 30 Z" fill="#7DD3FC"/>
+  <path d="M16 38 L7 39 L15 43 Z M15 45 L5 48 L14 51 Z M14 53 L4 57 L13 58 Z" fill="#38BDF8"/>
+  <path d="M22 26 L34 21 L41 19 L52 25 L60 30 L59 33 L46 36 L41 37 L54 40 L53 43 L38 46 L31 50 L27 60 L12 60 L15 46 L16 37 Z" fill="url(#ice)"/>
+  <path d="M34 21 L36 32 L22 26 M36 32 L46 36 M36 32 L31 50 M36 32 L16 37" stroke="#0B1220" stroke-opacity="0.3" stroke-width="1.1" stroke-linejoin="round"/>
+  <path d="M41 24.5 L46.5 23.5 L44 26.5 Z" fill="#0B1220"/>
+  <path d="M48 35.4 L50.5 35 L49.3 39.5 Z" fill="#F0FBFF"/>
+</svg>

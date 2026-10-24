@@ -1,0 +1,30 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Minimal permissions for the main window. Native dialogs, URL opening, and clipboard writes run behind validated app commands, so no plugin permissions are exposed to the frontend.",
+  "windows": ["main"],
+  "permissions": [
+    "allow-get-app-info",
+    "allow-open-external-url",
+    "allow-copy-text",
+    "allow-get-settings",
+    "allow-save-settings",
+    "allow-check-connection",
+    "allow-list-models",
+    "allow-chat-stream",
+    "allow-cancel-generation",
+    "allow-list-conversations",
+    "allow-search-conversations",
+    "allow-create-conversation",
+    "allow-rename-conversation",
+    "allow-delete-conversation",
+    "allow-delete-all-conversations",
+    "allow-list-messages",
+    "allow-add-message",
+    "allow-set-last-conversation",
+    "allow-get-last-conversation",
+    "allow-get-project",
+    "allow-pick-project-folder",
+    "allow-clear-project"
+  ]
+}

@@ -1,0 +1,196 @@
+use serde::Deserialize;
+use tauri::ipc::Channel;
+use tauri::State;
+
+use crate::error::{AppError, AppResult};
+use crate::ollama::types::{
+    ChatMessage, ConnectionInfo, GenerationOutcome, ModelInfo, StreamEvent,
+};
+use crate::ollama::{OllamaClient, StreamTimeouts};
+use crate::settings::{self, validate_model_name};
+use crate::state::AppState;
+
+const MAX_HISTORY_MESSAGES: usize = 2_000;
+const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
+
+fn client_for(state: &AppState, endpoint: Option<String>) -> AppResult<OllamaClient> {
+    let endpoint = match endpoint {
+        Some(endpoint) => endpoint,
+        None => settings::load(&*state.db.conn()?)?.ollama_endpoint,
+    };
+    OllamaClient::new(state.http.clone(), &endpoint)
+}
+
+/// Check that Ollama is reachable. `endpoint` lets the settings screen test
+/// an unsaved value; otherwise the saved endpoint is used.
+#[tauri::command]
+pub async fn check_connection(
+    state: State<'_, AppState>,
+    endpoint: Option<String>,
+) -> AppResult<ConnectionInfo> {
+    let client = client_for(&state, endpoint)?;
+    let result = client.check_connection().await;
+    match &result {
+        Ok(info) => log::info!("connected to Ollama {} at {}", info.version, info.endpoint),
+        Err(err) => log::warn!("Ollama connection check failed: {err}"),
+    }
+    result
+}
+
+#[tauri::command]
+pub async fn list_models(
+    state: State<'_, AppState>,
+    endpoint: Option<String>,
+) -> AppResult<Vec<ModelInfo>> {
+    client_for(&state, endpoint)?.list_models().await
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatStreamRequest {
+    pub request_id: String,
+    pub model: String,
+    pub messages: Vec<ChatMessage>,
+}
+
+impl ChatStreamRequest {
+    pub fn validate(&self) -> AppResult<()> {
+        let id_ok = !self.request_id.is_empty()
+            && self.request_id.len() <= 64
+            && self
+                .request_id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-');
+        if !id_ok {
+            return Err(AppError::validation("Invalid request id."));
+        }
+        validate_model_name(&self.model)?;
+        if self.messages.is_empty() {
+            return Err(AppError::validation("There is nothing to send."));
+        }
+        if self.messages.len() > MAX_HISTORY_MESSAGES {
+            return Err(AppError::validation(
+                "This conversation is too long to send.",
+            ));
+        }
+        let mut total = 0usize;
+        for message in &self.messages {
+            if !matches!(message.role.as_str(), "user" | "assistant" | "system") {
+                return Err(AppError::validation("Invalid message role."));
+            }
+            total += message.content.len();
+        }
+        if total > MAX_REQUEST_BYTES {
+            return Err(AppError::validation(
+                "This conversation is too large to send.",
+            ));
+        }
+        if self.messages.last().is_none_or(|m| m.role != "user") {
+            return Err(AppError::validation(
+                "The last message must come from the user.",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Stream a chat response. Events are delivered over `on_event`; the
+/// returned outcome carries the full text (partial when cancelled).
+#[tauri::command]
+pub async fn chat_stream(
+    state: State<'_, AppState>,
+    request: ChatStreamRequest,
+    on_event: Channel<StreamEvent>,
+) -> AppResult<GenerationOutcome> {
+    request.validate()?;
+    let model = validate_model_name(&request.model)?;
+    let client = client_for(&state, None)?;
+    let guard = state.generations.register(&request.request_id)?;
+    let token = guard.token().clone();
+
+    // Never log message content; only metadata.
+    log::info!(
+        "generation {} started: model={model}, messages={}",
+        request.request_id,
+        request.messages.len()
+    );
+
+    let result = client
+        .chat_stream(
+            &model,
+            &request.messages,
+            guard.token(),
+            StreamTimeouts::default(),
+            |event| {
+                if on_event.send(event).is_err() {
+                    // The webview went away (reload/close); stop generating.
+                    token.cancel();
+                }
+            },
+        )
+        .await;
+
+    match &result {
+        Ok(outcome) => log::info!(
+            "generation {} finished: {:?}, {} chars",
+            request.request_id,
+            outcome.status,
+            outcome.content.len()
+        ),
+        Err(err) => log::warn!(
+            "generation {} failed: {:?}: {err}",
+            request.request_id,
+            err.kind
+        ),
+    }
+    result
+}
+
+/// Ask a running generation to stop. Returns `false` if it already ended.
+#[tauri::command]
+pub fn cancel_generation(state: State<'_, AppState>, request_id: String) -> bool {
+    let cancelled = state.generations.cancel(&request_id);
+    log::info!("cancel requested for generation {request_id}: {cancelled}");
+    cancelled
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn req(messages: Vec<(&str, &str)>) -> ChatStreamRequest {
+        ChatStreamRequest {
+            request_id: "abc-123".into(),
+            model: "qwen3:8b".into(),
+            messages: messages
+                .into_iter()
+                .map(|(role, content)| ChatMessage {
+                    role: role.into(),
+                    content: content.into(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn accepts_valid_requests() {
+        assert!(req(vec![("system", "be nice"), ("user", "hi")])
+            .validate()
+            .is_ok());
+    }
+
+    #[test]
+    fn rejects_invalid_requests() {
+        assert!(req(vec![]).validate().is_err());
+        assert!(req(vec![("tool", "x"), ("user", "hi")]).validate().is_err());
+        assert!(req(vec![("user", "hi"), ("assistant", "yo")])
+            .validate()
+            .is_err());
+        let mut bad_id = req(vec![("user", "hi")]);
+        bad_id.request_id = "../../etc".into();
+        assert!(bad_id.validate().is_err());
+        let mut bad_model = req(vec![("user", "hi")]);
+        bad_model.model = "".into();
+        assert!(bad_model.validate().is_err());
+    }
+}
