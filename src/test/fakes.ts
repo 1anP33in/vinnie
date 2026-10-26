@@ -37,7 +37,9 @@ import {
   type WorkspaceService,
 } from "@/services";
 import { DEFAULT_SETTINGS } from "@/settings/validation";
+import { permissionManager } from "@/agent/runtime/permissionManager";
 import { useActivityStore } from "@/state/activityStore";
+import { useAgentStore } from "@/state/agentStore";
 import { useApprovalStore } from "@/state/approvalStore";
 import { useChangesStore } from "@/state/changesStore";
 import { useChatStore } from "@/state/chatStore";
@@ -66,12 +68,14 @@ const initialStates = [
   [useSearchStore, useSearchStore.getState()],
   [useTerminalStore, useTerminalStore.getState()],
   [useWorkspaceStore, useWorkspaceStore.getState()],
+  [useAgentStore, useAgentStore.getState()],
 ] as const;
 
 export function resetStores() {
   for (const [store, state] of initialStates) {
     (store as { setState(s: unknown, replace: true): void }).setState(state, true);
   }
+  permissionManager.clearSession();
 }
 
 /** A scripted generation that tests drive step by step. */
@@ -128,6 +132,8 @@ export class FakeStream {
 
 export interface FakeProvider extends AIProvider {
   streams: FakeStream[];
+  /** Context length reported by modelDetails (null = unknown). */
+  contextLength: number | null;
   models: ModelInfo[];
   connectionError: VinnieError | null;
   lastStream(): FakeStream;
@@ -143,7 +149,11 @@ export function createFakeProvider(models: ModelInfo[] = [model("qwen3:8b")]): F
     displayName: "Fake",
     streams: [],
     models,
+    contextLength: null,
     connectionError: null,
+    async modelDetails(name) {
+      return { name, contextLength: provider.contextLength, capabilities: ["completion", "tools"] };
+    },
     async checkConnection(endpoint) {
       if (provider.connectionError) throw provider.connectionError;
       return { endpoint: endpoint ?? "http://localhost:11434", version: "0.0.0-test" };
@@ -584,6 +594,7 @@ export function installFakes(overrides: Partial<Services> = {}) {
       opened.push(url);
     },
     openLogDir: async () => {},
+    launchOllama: async () => ({ status: "started" as const, executable: "C:\\Ollama\\ollama.exe" }),
   };
   setServices({
     provider,
@@ -604,6 +615,7 @@ export function installFakes(overrides: Partial<Services> = {}) {
     conversations,
     project,
     settings,
+    system,
     opened,
     copied,
     ws,

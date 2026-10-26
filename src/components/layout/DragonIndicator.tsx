@@ -8,6 +8,7 @@ const TONE: Record<DragonState, string> = {
   reading: "text-accent",
   editing: "text-accent-strong",
   running: "text-accent-strong",
+  working: "text-accent-strong",
   waiting: "text-warning",
   error: "text-danger",
   success: "text-success",

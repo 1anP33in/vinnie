@@ -1,6 +1,7 @@
 //! Ollama model provider.
 
 mod client;
+pub mod launcher;
 mod stream;
 #[cfg(test)]
 mod test_server;

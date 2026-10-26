@@ -70,11 +70,14 @@ export function buildSystemPrompt(input: ProjectContextInput | null, toolsAvaila
       ].join("\n"),
     );
   }
-  if (!input) {
-    parts.push("No project folder is selected, so you cannot see the user's files.");
-    return parts.join("\n\n");
-  }
+  parts.push(buildProjectSection(input));
+  return parts.join("\n\n");
+}
 
+/** The project part of the prompt: detected facts, structure, open file. */
+export function buildProjectSection(input: ProjectContextInput | null): string {
+  if (!input) return "No project folder is selected, so you cannot see the user's files.";
+  const parts: string[] = [];
   const m = input.metadata;
   const summary: string[] = [
     "Project context (detected automatically from the files; it may be incomplete):",

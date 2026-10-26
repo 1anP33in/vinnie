@@ -2,7 +2,16 @@
 // drives a status indicator with it; Phase 5 will connect the same events to
 // the animated ice dragon. Events are emitted only by real operations.
 
-export type DragonState = "idle" | "thinking" | "reading" | "editing" | "running" | "error" | "waiting" | "success";
+export type DragonState =
+  | "idle"
+  | "thinking"
+  | "reading"
+  | "editing"
+  | "running"
+  | "working"
+  | "error"
+  | "waiting"
+  | "success";
 
 export interface DragonEvent {
   type: `dragon.${DragonState}`;

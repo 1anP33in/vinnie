@@ -50,6 +50,8 @@ fn main() {
             "detect_package_managers",
             "build_install_command",
             "open_log_dir",
+            "model_details",
+            "launch_ollama",
         ]),
     ))
     .expect("failed to run tauri-build");

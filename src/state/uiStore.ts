@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 export type View = "chat" | "settings";
 export type SideView = "explorer" | "search" | "changes" | "chats";
-export type BottomTab = "terminal" | "activity";
+export type BottomTab = "terminal" | "activity" | "task";
 
 interface UiState {
   view: View;

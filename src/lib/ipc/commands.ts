@@ -19,7 +19,9 @@ import type {
   FileVersion,
   GitStatus,
   InstallCommand,
+  LaunchResult,
   ManagerDetection,
+  ModelDetails,
   ProcessEvent,
   ProjectMetadata,
   ProjectTree,
@@ -62,7 +64,7 @@ export const commands = {
     call<ConnectionInfo>("check_connection", { endpoint: endpoint ?? null }),
   listModels: (endpoint?: string) => call<ModelInfo[]>("list_models", { endpoint: endpoint ?? null }),
   chatStream: (
-    request: { requestId: string; model: string; messages: ChatTurn[]; tools?: object[] },
+    request: { requestId: string; model: string; messages: ChatTurn[]; tools?: object[]; numCtx?: number | null },
     onEvent: (event: StreamEvent) => void,
   ) => {
     const channel = new Channel<StreamEvent>();
@@ -126,6 +128,8 @@ export const commands = {
   getProjectMetadata: () => call<ProjectMetadata | null>("get_project_metadata"),
   gitStatus: () => call<GitStatus>("git_status"),
   detectPackageManagers: () => call<ManagerDetection[]>("detect_package_managers"),
+  modelDetails: (model: string) => call<ModelDetails>("model_details", { model }),
+  launchOllama: () => call<LaunchResult>("launch_ollama"),
   buildInstallCommand: (manager: string, packages: string[], dev = false) =>
     call<InstallCommand>("build_install_command", { manager, packages, dev }),
 };

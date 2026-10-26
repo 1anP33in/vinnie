@@ -19,6 +19,7 @@ import type {
   FileVersion,
   GitStatus,
   InstallCommand,
+  LaunchResult,
   ManagerDetection,
   ProcessEvent,
   ProjectMetadata,
@@ -49,6 +50,8 @@ export interface SystemService {
   openExternalUrl(url: string): Promise<void>;
   copyText(text: string): Promise<void>;
   openLogDir(): Promise<void>;
+  /** Start `ollama serve` locally (when the endpoint is on this computer). */
+  launchOllama(): Promise<LaunchResult>;
 }
 
 /** File and directory operations inside the active project. */
@@ -116,6 +119,7 @@ function createDefaultServices(): Services {
       openExternalUrl: commands.openExternalUrl,
       copyText: commands.copyText,
       openLogDir: commands.openLogDir,
+      launchOllama: commands.launchOllama,
     },
     tools: createToolRegistry(),
     workspace: {

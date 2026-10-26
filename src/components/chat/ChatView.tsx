@@ -1,11 +1,13 @@
 import { RefreshCw, RotateCcw, Settings as SettingsIcon } from "lucide-react";
 import { Button } from "@/components/common/Button";
+import { LaunchOllamaButton } from "@/components/common/LaunchOllamaButton";
 import { ErrorNotice } from "@/components/common/ErrorNotice";
 import { Spinner } from "@/components/common/Spinner";
 import { useChatStore } from "@/state/chatStore";
 import { useConversationStore } from "@/state/conversationStore";
 import { useSettingsStore } from "@/state/settingsStore";
 import { useUiStore } from "@/state/uiStore";
+import { AgentPanel } from "@/components/agent/AgentPanel";
 import { ApprovalCards } from "./ApprovalCard";
 import { Composer } from "./Composer";
 import { MessageList } from "./MessageList";
@@ -48,6 +50,7 @@ function ChatErrorBanner() {
                 Retry
               </Button>
             )}
+            {kind === "unreachable" && <LaunchOllamaButton />}
             {(kind === "unreachable" || kind === "malformed") && (
               <Button size="sm" variant="ghost" onClick={() => setView("settings")} icon={<SettingsIcon size={13} />}>
                 Open settings
@@ -95,6 +98,7 @@ export function ChatView() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {body}
+      <AgentPanel />
       <ApprovalCards />
       <ChatNotice />
       <ChatErrorBanner />

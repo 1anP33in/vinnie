@@ -56,6 +56,17 @@ export interface ModelInfo {
   quantization: string | null;
 }
 
+export interface ModelDetails {
+  name: string;
+  contextLength: number | null;
+  capabilities: string[];
+}
+
+export interface LaunchResult {
+  status: "started" | "alreadyRunning";
+  executable: string | null;
+}
+
 export interface ConnectionInfo {
   endpoint: string;
   version: string;
@@ -107,6 +118,23 @@ export interface Settings {
   ignoredDirectories: string[];
   toolsEnabled: boolean;
   projectContextEnabled: boolean;
+  agent: AgentSettings;
+}
+
+export type AgentModeSetting = "ask" | "assist" | "agent";
+
+export interface AgentSettings {
+  mode: AgentModeSetting;
+  maxIterations: number;
+  maxToolCalls: number;
+  maxRetries: number;
+  commandTimeoutSecs: number;
+  taskTimeoutMins: number;
+  maxChangedFiles: number;
+  /** Tokens; 0 = automatic. */
+  contextBudget: number;
+  autoVerify: boolean;
+  debugView: boolean;
 }
 
 export type PermissionLevel = "allowed" | "approval" | "denied";

@@ -2,6 +2,7 @@ import { getServices } from "@/services";
 import { installFakes, resetStores } from "@/test/fakes";
 import type { ManagerDetection, RunResult } from "@/lib/ipc/types";
 import { createToolRegistry } from "../toolRegistry";
+import { PermissionManager } from "../runtime/permissionManager";
 import type { ApprovalDecision, ApprovalRequest, ToolContext, ToolRegistry } from "../types";
 import { registerWorkspaceTools } from "./index";
 
@@ -10,18 +11,27 @@ let registry: ToolRegistry;
 let approvals: ApprovalRequest[];
 let decision: ApprovalDecision;
 let changed: string[];
+let manager: PermissionManager;
+let ask: (r: ApprovalRequest) => Promise<ApprovalDecision>;
 
 function context(overrides: Partial<ToolContext> = {}): ToolContext {
-  return {
+  const ctx: ToolContext = {
     taskId: "task-1",
     signal: new AbortController().signal,
     services: getServices(),
     permissions: { read: "allowed", write: "approval", execute: "approval", installDependencies: "approval" },
+    mode: "agent",
     workspaceRoot: "C:\\Projects\\demo",
-    requestApproval: async (r) => {
-      approvals.push(r);
-      return decision;
-    },
+    authorize: (request, capability) =>
+      manager.authorize({
+        request,
+        capability,
+        mode: ctx.mode,
+        permissions: ctx.permissions,
+        taskId: ctx.taskId,
+        workspace: ctx.workspaceRoot,
+        prompt: (r) => ask(r),
+      }),
     runCommand: (r) =>
       getServices().process.run(
         { runId: "r1", command: r.command, actor: "assistant", approved: r.approved, remember: r.remember },
@@ -31,6 +41,7 @@ function context(overrides: Partial<ToolContext> = {}): ToolContext {
     projectChanged: () => {},
     ...overrides,
   };
+  return ctx;
 }
 
 beforeEach(() => {
@@ -45,10 +56,15 @@ beforeEach(() => {
   approvals = [];
   decision = { approved: true };
   changed = [];
+  manager = new PermissionManager();
+  ask = async (r) => {
+    approvals.push(r);
+    return decision;
+  };
 });
 
 describe("workspace tools", () => {
-  it("registers all Phase 2 tools", () => {
+  it("registers the workspace and agent tools", () => {
     expect(registry.list().map((t) => t.name)).toEqual([
       "get_project_structure",
       "search_files",
@@ -59,40 +75,43 @@ describe("workspace tools", () => {
       "move_file",
       "run_command",
       "install_dependency",
+      "update_plan",
+      "remember",
+      "get_project_info",
     ]);
   });
 
   it("searches and reports path:line results", async () => {
     const r = await registry.execute("search_files", { query: "RegisterCommand" }, context());
-    expect(r).toEqual({ ok: true, content: expect.stringContaining("client/main.lua:1: RegisterCommand('duty'") });
+    expect(r).toMatchObject({ success: true, summary: expect.stringContaining("client/main.lua:1: RegisterCommand('duty'") });
   });
 
   it("reads files with line numbers and windows", async () => {
     const r = await registry.execute("read_file", { path: "client/main.lua", startLine: 2, endLine: 3 }, context());
-    expect(r.ok && r.content).toBe("client/main.lua (lines 2-3 of 4)\n2|   print('on duty')\n3| end)\n… 1 more lines (read with startLine=4).");
+    expect(r.success && r.summary).toBe("client/main.lua (lines 2-3 of 4)\n2|   print('on duty')\n3| end)\n… 1 more lines (read with startLine=4).");
   });
 
   it("asks before reading files that may contain secrets", async () => {
     decision = { approved: false };
     const denied = await registry.execute("read_file", { path: ".env" }, context());
-    expect(denied).toMatchObject({ ok: false, kind: "denied" });
+    expect(denied).toMatchObject({ success: false, outcome: "denied", error: { code: "PERMISSION_DENIED" } });
     expect(approvals[0]).toMatchObject({ kind: "read", path: ".env" });
 
     decision = { approved: true };
     const allowed = await registry.execute("read_file", { path: ".env" }, context());
-    expect(allowed.ok && allowed.content).toContain("SECRET=1");
+    expect(allowed.success && allowed.summary).toContain("SECRET=1");
   });
 
   it("refuses paths outside the project", async () => {
     const r = await registry.execute("read_file", { path: "../../Windows/win.ini" }, context());
-    expect(r).toMatchObject({ ok: false, kind: "forbidden" });
+    expect(r).toMatchObject({ success: false, error: { code: "INVALID_ARGUMENT" } });
   });
 
   it("shows a diff for approval and applies the change only when approved", async () => {
     const content = "RegisterCommand('duty', function()\n  print('now on duty')\nend)\n";
     decision = { approved: false };
     const rejected = await registry.execute("write_file", { path: "client/main.lua", content, reason: "Fix message" }, context());
-    expect(rejected).toMatchObject({ ok: false, kind: "denied" });
+    expect(rejected).toMatchObject({ success: false, outcome: "denied", error: { code: "PERMISSION_DENIED" } });
     expect(fakes.ws.files.get("client/main.lua")).toContain("print('on duty')");
     const request = approvals[0];
     expect(request?.kind).toBe("file");
@@ -104,7 +123,7 @@ describe("workspace tools", () => {
 
     decision = { approved: true };
     const applied = await registry.execute("write_file", { path: "client/main.lua", content }, context());
-    expect(applied.ok && applied.content).toMatch(/^Modified client\/main\.lua/);
+    expect(applied.success && applied.summary).toMatch(/^Modified client\/main\.lua/);
     expect(fakes.ws.files.get("client/main.lua")).toBe(content);
     expect(fakes.ws.changes[0]).toMatchObject({ taskId: "task-1", source: "assistant" });
     expect(changed).toEqual(["client/main.lua"]);
@@ -118,7 +137,7 @@ describe("workspace tools", () => {
 
     decision = { approved: false };
     const r = await registry.execute("delete_file", { path: "server/main.lua" }, context({ permissions }));
-    expect(r).toMatchObject({ ok: false, kind: "denied" });
+    expect(r).toMatchObject({ success: false, outcome: "denied", error: { code: "PERMISSION_DENIED" } });
     expect(approvals).toHaveLength(1);
     expect(fakes.ws.files.has("server/main.lua")).toBe(true);
   });
@@ -126,13 +145,13 @@ describe("workspace tools", () => {
   it("respects a WRITE denial", async () => {
     const permissions = { read: "allowed", write: "denied", execute: "approval", installDependencies: "approval" } as const;
     const r = await registry.execute("create_file", { path: "x.lua", content: "" }, context({ permissions }));
-    expect(r).toMatchObject({ ok: false, kind: "permission_denied" });
+    expect(r).toMatchObject({ success: false, outcome: "denied", error: { code: "PERMISSION_DENIED" } });
     expect(approvals).toHaveLength(0);
   });
 
   it("moves files", async () => {
     const r = await registry.execute("move_file", { from: "client/main.lua", to: "client/duty.lua" }, context());
-    expect(r.ok).toBe(true);
+    expect(r.success).toBe(true);
     expect(fakes.ws.files.has("client/duty.lua")).toBe(true);
     expect(changed).toEqual(["client/main.lua", "client/duty.lua"]);
   });
@@ -141,16 +160,16 @@ describe("workspace tools", () => {
     fakes.process.outcomes.set("npm test", { exitCode: 0, stdout: "3 passed\n" });
     const r = await registry.execute("run_command", { command: "npm test" }, context());
     expect(approvals).toHaveLength(0);
-    expect(r.ok && r.content).toContain("Result: succeeded");
-    expect(r.ok && r.content).toContain("Exit code: 0");
-    expect(r.ok && r.content).toContain("3 passed");
+    expect(r.success && r.summary).toContain("Result: succeeded");
+    expect(r.success && r.summary).toContain("Exit code: 0");
+    expect(r.success && r.summary).toContain("3 passed");
   });
 
   it("asks before approval-required commands and honors denial", async () => {
     fakes.process.requirements.set("git checkout main", "approval");
     decision = { approved: false };
     const r = await registry.execute("run_command", { command: "git checkout main", reason: "Switch branch" }, context());
-    expect(r).toMatchObject({ ok: false, kind: "denied" });
+    expect(r).toMatchObject({ success: false, outcome: "denied", error: { code: "PERMISSION_DENIED" } });
     expect(approvals[0]).toMatchObject({ kind: "command", command: "git checkout main", reason: "Switch branch" });
     expect(fakes.process.runs).toHaveLength(0);
   });
@@ -158,7 +177,7 @@ describe("workspace tools", () => {
   it("never runs blocked commands and never asks about them", async () => {
     fakes.process.requirements.set("del /q *", "blocked");
     const r = await registry.execute("run_command", { command: "del /q *" }, context());
-    expect(r).toMatchObject({ ok: false, kind: "blocked" });
+    expect(r).toMatchObject({ success: false, error: { code: "PERMISSION_DENIED" } });
     expect(approvals).toHaveLength(0);
     expect(fakes.process.runs).toHaveLength(0);
   });
@@ -166,8 +185,9 @@ describe("workspace tools", () => {
   it("reports failed commands honestly with a diagnosis", async () => {
     fakes.process.outcomes.set("npm test", { exitCode: 1, stderr: "Error: Cannot find module 'express'\n" });
     const r = await registry.execute("run_command", { command: "npm test" }, context());
-    expect(r.ok && r.content).toContain("Result: FAILED");
-    expect(r.ok && r.content).toContain("Likely cause: Cannot find module 'express'.");
+    expect(r).toMatchObject({ success: false, error: { code: "COMMAND_FAILED" } });
+    expect(r.summary).toContain("Result: FAILED");
+    expect(r.summary).toContain("Likely cause: Cannot find module 'express'.");
   });
 
   it("installs with the detected package manager and reports failure truthfully", async () => {
@@ -184,7 +204,8 @@ describe("workspace tools", () => {
     fakes.process.outcomes.set("pnpm add zod", { exitCode: 1, stderr: "ERR_PNPM_FETCH_404\n" });
     const r = await registry.execute("install_dependency", { packages: ["zod"], reason: "Validation" }, context());
     expect(approvals[0]).toMatchObject({ kind: "command", command: "pnpm add zod", install: { manager: "pnpm", packages: ["zod"] } });
-    expect(r.ok && r.content).toMatch(/^Installing zod FAILED/);
+    expect(r.success).toBe(false);
+    expect(r.summary).toMatch(/^Installing zod FAILED/);
   });
 
   it("lets the user choose a manager when detection is ambiguous", async () => {
@@ -197,16 +218,17 @@ describe("workspace tools", () => {
     const r = await registry.execute(
       "install_dependency",
       { packages: ["express"] },
-      context({
-        requestApproval: async (req) => {
+      (() => {
+        ask = async (req) => {
           approvals.push(req);
           calls++;
           return calls === 1 ? { approved: true, manager: "yarn" } : { approved: true };
-        },
-      }),
+        };
+        return context();
+      })(),
     );
     expect(approvals[0]).toMatchObject({ install: { ambiguous: true, candidates: ["npm", "yarn"] } });
     expect(fakes.process.runs.map((x) => x.command)).toEqual(["yarn add express"]);
-    expect(r.ok && r.content).toMatch(/^Installed express successfully/);
+    expect(r.success && r.summary).toMatch(/^Installed express successfully/);
   });
 });

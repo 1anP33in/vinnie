@@ -2,7 +2,8 @@ import { FileWarning, Package, ShieldQuestion, Terminal } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/common/Button";
 import { DiffView } from "@/components/editor/DiffView";
-import type { ApprovalRequest } from "@/agent/types";
+import type { ApprovalRequest, PermissionScope } from "@/agent/types";
+import { useEditorStore } from "@/state/editorStore";
 import { useApprovalStore, type PendingApproval } from "@/state/approvalStore";
 
 function Field({ label, children, mono }: { label: string; children: React.ReactNode; mono?: boolean }) {
@@ -58,7 +59,12 @@ function CommandBody({ request, manager, setManager }: {
         {request.cwd ? `\\${request.cwd}` : ""}
       </Field>
       {request.reason && <Field label="Reason">{request.reason}</Field>}
-      <Field label="Why approval">{request.assessment.reason}</Field>
+      <Field label="Risk">
+        <span className={request.assessment.risk === "low" ? "text-success" : "text-warning"}>
+          {request.install ? "Installs packages (high)" : request.assessment.risk === "low" ? "Low" : "Needs approval (high)"}
+        </span>{" "}
+        <span className="text-faint">— {request.assessment.reason}</span>
+      </Field>
     </div>
   );
 }
@@ -77,15 +83,21 @@ function ApprovalItem({ item }: { item: PendingApproval }) {
     icon = request.install ? <Package size={15} className="text-accent" /> : <Terminal size={15} className="text-accent" />;
     title = request.install ? "Vinnie wants to install dependencies:" : "Vinnie wants to run:";
     body = <CommandBody request={request} manager={manager} setManager={setManager} />;
-    const decide = (approved: boolean, remember = false) =>
-      respond(item.id, { approved, remember, manager: request.install ? manager : undefined });
+    const decide = (approved: boolean, scope: PermissionScope = "once") =>
+      respond(item.id, { approved, scope, manager: request.install ? manager : undefined });
     actions = (
       <>
         <Button size="sm" variant="primary" onClick={() => decide(true)}>
           Allow once
         </Button>
+        <Button size="sm" onClick={() => decide(true, "task")} title="Allow this exact command until the current task ends">
+          Allow for this task
+        </Button>
+        <Button size="sm" onClick={() => decide(true, "session")} title="Allow this exact command until Vinnie restarts">
+          This session
+        </Button>
         {!request.install?.ambiguous && (
-          <Button size="sm" onClick={() => decide(true, true)} title="Always allow this exact command in this project">
+          <Button size="sm" onClick={() => decide(true, "workspace")} title="Always allow this exact command in this project">
             Always allow
           </Button>
         )}
@@ -114,6 +126,9 @@ function ApprovalItem({ item }: { item: PendingApproval }) {
           )}
         </Field>
         {request.reason && <Field label="Reason">{request.reason}</Field>}
+        <Field label="Risk">
+          <span className="text-warning">{p.kind === "delete" ? "Deletes a file (reversible)" : "Changes project files (reversible)"}</span>
+        </Field>
         {p.kind !== "move" &&
           (p.binary ? (
             <p className="text-xs text-warning">Binary file: no text diff available.</p>
@@ -131,14 +146,36 @@ function ApprovalItem({ item }: { item: PendingApproval }) {
         {p.kind === "delete" && <p className="text-xs text-faint">A snapshot is kept, so the file can be restored from Changes.</p>}
       </div>
     );
+    const viewChanges = () =>
+      useEditorStore.getState().openDiff({
+        id: `proposal:${item.id}`,
+        path: p.newPath ?? p.path,
+        title: `${(p.newPath ?? p.path).split("/").pop()} (proposed)`,
+        original: p.before ?? "",
+        modified: p.after ?? "",
+      });
     actions = (
       <>
         <Button size="sm" variant={p.kind === "delete" ? "danger" : "primary"} onClick={() => respond(item.id, { approved: true })}>
-          {p.kind === "delete" ? "Delete" : "Apply change"}
+          {p.kind === "delete" ? "Delete" : "Approve"}
         </Button>
-        <Button size="sm" onClick={() => respond(item.id, { approved: false })}>
-          Reject
+        {p.kind !== "delete" && (
+          <Button
+            size="sm"
+            onClick={() => respond(item.id, { approved: true, scope: "task" })}
+            title="Approve this and Vinnie's other file changes until the current task ends"
+          >
+            Approve all for this task
+          </Button>
+        )}
+        <Button size="sm" variant="danger" onClick={() => respond(item.id, { approved: false })}>
+          Deny
         </Button>
+        {p.kind !== "move" && !p.binary && (
+          <Button size="sm" variant="ghost" onClick={viewChanges}>
+            View changes
+          </Button>
+        )}
       </>
     );
   } else {

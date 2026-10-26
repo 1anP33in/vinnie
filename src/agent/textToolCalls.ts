@@ -40,10 +40,60 @@ export function extractTextToolCalls(content: string, toolNames: Set<string>): T
     return calls.every(Boolean) ? (calls as ToolCall[]) : [];
   }
 
-  // A single fenced block: ```json {...} ```
-  const fenced = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
-  if (fenced) text = fenced[1]!.trim();
-  if (!text.startsWith("{") || !text.endsWith("}")) return [];
-  const call = parseCall(text, toolNames);
-  return call ? [call] : [];
+  // One or more JSON objects (bare or in ```json fences), nothing else.
+  text = text.replace(/```(?:json)?/g, "");
+  const objects = scanObjects(text);
+  if (!objects || objects.length === 0) return [];
+  const calls = objects.map((o) => parseCall(o, toolNames));
+  return calls.every(Boolean) ? (calls as ToolCall[]) : [];
+}
+
+/**
+ * Split text into top-level JSON objects separated only by whitespace.
+ * Returns null if anything else is present.
+ */
+function scanObjects(text: string): string[] | null {
+  const out: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    if (/\s/.test(text[i]!)) {
+      i++;
+      continue;
+    }
+    if (text[i] !== "{") return null;
+    const end = objectEnd(text, i);
+    if (end < 0) return null;
+    out.push(text.slice(i, end + 1));
+    i = end + 1;
+  }
+  return out;
+}
+
+/** Index of the brace closing the object that starts at `start`, or -1. */
+function objectEnd(text: string, start: number): number {
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (ch === "\\") i++;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+/**
+ * Whether a reply *describes* tool calls as JSON (e.g. fenced blocks inside
+ * prose) without making them. Such calls are never executed; the runtime
+ * tells the model they did not run.
+ */
+export function describesToolCalls(content: string, toolNames: Set<string>): boolean {
+  for (let i = content.indexOf("{"); i >= 0; i = content.indexOf("{", i + 1)) {
+    const end = objectEnd(content, i);
+    if (end > i && parseCall(content.slice(i, end + 1), toolNames)) return true;
+  }
+  return false;
 }

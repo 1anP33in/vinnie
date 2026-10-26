@@ -1,3 +1,4 @@
+import { LaunchOllamaButton } from "@/components/common/LaunchOllamaButton";
 import { describeError } from "@/lib/errors";
 import { useChatStore } from "@/state/chatStore";
 import { useConnectionStore } from "@/state/connectionStore";
@@ -32,6 +33,9 @@ export function StatusBar() {
         waiting: "Starting",
         streaming: "Generating",
         tools: "Using tools",
+        permission: "Waiting for approval",
+        verifying: "Verifying",
+        paused: "Paused",
         stopping: "Stopping",
       }[generation.phase]
     : "Idle";
@@ -54,6 +58,11 @@ export function StatusBar() {
           <button type="button" onClick={() => void refresh()} className="ml-1 text-accent hover:underline">
             Retry
           </button>
+        )}
+        {status === "disconnected" && error?.kind === "unreachable" && (
+          <span className="ml-2">
+            <LaunchOllamaButton compact />
+          </span>
         )}
       </span>
       <span data-testid="status-generation">Generation: {generationText}</span>
