@@ -1,4 +1,5 @@
-import { Activity as ActivityIcon, SquareTerminal, X } from "lucide-react";
+import { Activity as ActivityIcon, Bot, SquareTerminal, X } from "lucide-react";
+import { TaskPanel } from "@/components/agent/TaskPanel";
 import { ActivityPanel } from "@/components/activity/ActivityPanel";
 import { IconButton } from "@/components/common/Button";
 import { TerminalPanel } from "@/components/terminal/TerminalPanel";
@@ -36,11 +37,12 @@ export function BottomPanel() {
       <div role="tablist" className="flex h-8 shrink-0 items-center gap-2 border-b border-border px-2">
         <Tab tab="terminal" label="Terminal" icon={<SquareTerminal size={13} />} badge={running} />
         <Tab tab="activity" label="Activity" icon={<ActivityIcon size={13} />} badge={activeOps} />
+        <Tab tab="task" label="Task" icon={<Bot size={13} />} />
         <IconButton label="Hide panel (Ctrl+`)" className="ml-auto size-6" onClick={toggle}>
           <X size={13} />
         </IconButton>
       </div>
-      <div className="min-h-0 flex-1">{tab === "terminal" ? <TerminalPanel /> : <ActivityPanel />}</div>
+      <div className="min-h-0 flex-1">{tab === "terminal" ? <TerminalPanel /> : tab === "activity" ? <ActivityPanel /> : <TaskPanel />}</div>
     </div>
   );
 }

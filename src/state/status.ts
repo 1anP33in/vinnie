@@ -14,7 +14,13 @@ export function useCurrentOperation(): string | null {
       case "context":
         return "Gathering project context…";
       case "tools":
-        return generation.toolLabel ? `${generation.toolLabel}…` : "Using tools…";
+        return generation.toolLabel ? `${generation.toolLabel}…` : "Vinnie is working…";
+      case "permission":
+        return "Vinnie is waiting for your approval…";
+      case "verifying":
+        return generation.toolLabel ? `Vinnie is verifying: ${generation.toolLabel}…` : "Vinnie is verifying…";
+      case "paused":
+        return "Vinnie is paused.";
       case "waiting":
         return `Waiting for ${generation.model} (loading the model can take a moment)…`;
       case "streaming":

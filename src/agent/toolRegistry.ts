@@ -1,11 +1,12 @@
 import { toVinnieError } from "@/lib/errors";
-import type { ToolDefinition, ToolRegistry, ToolResult, VinnieTool } from "./types";
+import { classifyErrorKind, recoveryHint } from "./runtime/recovery";
+import { toolFailure, type ToolDefinition, type ToolRegistry, type ToolResult, type VinnieTool } from "./types";
 
-const MAX_RESULT_CHARS = 40_000;
+const MAX_SUMMARY_CHARS = 40_000;
 
 function clip(text: string): string {
-  if (text.length <= MAX_RESULT_CHARS) return text;
-  return `${text.slice(0, MAX_RESULT_CHARS)}\n… (output truncated to ${MAX_RESULT_CHARS} characters)`;
+  if (text.length <= MAX_SUMMARY_CHARS) return text;
+  return `${text.slice(0, MAX_SUMMARY_CHARS)}\n… (output truncated to ${MAX_SUMMARY_CHARS} characters)`;
 }
 
 /** Parse arguments that a model may send as an object or a JSON string. */
@@ -38,43 +39,48 @@ export function createToolRegistry(): ToolRegistry {
     unregister: (name) => tools.delete(name),
     get: (name) => tools.get(name),
     list: (): ToolDefinition[] =>
-      [...tools.values()].map(({ name, description, inputSchema, capability }) => ({
+      [...tools.values()].map(({ name, description, inputSchema, category, riskLevel }) => ({
         name,
         description,
         inputSchema,
-        capability,
+        category,
+        riskLevel,
       })),
-    specs: () =>
-      [...tools.values()].map((t) => ({
-        type: "function",
-        function: { name: t.name, description: t.description, parameters: t.inputSchema },
-      })),
+    specs: (names) =>
+      [...tools.values()]
+        .filter((t) => !names || names.includes(t.name))
+        .map((t) => ({
+          type: "function",
+          function: { name: t.name, description: t.description, parameters: t.inputSchema },
+        })),
 
     async execute(name, input, context): Promise<ToolResult> {
       const tool = tools.get(name);
       if (!tool) {
-        return {
-          ok: false,
-          kind: "unknown_tool",
-          error: `There is no tool named "${name}". Available tools: ${[...tools.keys()].join(", ")}.`,
-        };
+        return toolFailure(
+          "TOOL_FAILURE",
+          `There is no tool named "${name}", so nothing was executed. Available tools: ${[...tools.keys()].join(", ")}.`,
+        );
       }
-      const parsed = tool.schema.safeParse(normalizeArguments(input));
+      const args = normalizeArguments(input);
+      if (typeof args === "string") {
+        return toolFailure("INVALID_ARGUMENT", `The arguments for ${name} are not valid JSON, so nothing was executed.`);
+      }
+      const parsed = tool.schema.safeParse(args);
       if (!parsed.success) {
-        const issues = parsed.error.issues
-          .map((i) => `${i.path.join(".") || "input"}: ${i.message}`)
-          .join("; ");
-        return { ok: false, kind: "invalid_input", error: `Invalid input for ${name}: ${issues}` };
+        const issues = parsed.error.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; ");
+        return toolFailure("INVALID_ARGUMENT", `Invalid input for ${name}: ${issues}. Nothing was executed.`);
       }
       if (context.signal.aborted) {
-        return { ok: false, kind: "denied", error: "The user stopped this request." };
+        return toolFailure("CANCELLED", "The task was stopped before this tool ran.", { outcome: "cancelled" });
       }
       try {
         const result = await tool.execute(parsed.data, context);
-        return result.ok ? { ok: true, content: clip(result.content) } : result;
+        return { ...result, summary: clip(result.summary) };
       } catch (err) {
         const e = toVinnieError(err);
-        return { ok: false, kind: e.kind, error: e.message };
+        const code = classifyErrorKind(e.kind);
+        return toolFailure(code, e.message, { details: recoveryHint(code) });
       }
     },
   };

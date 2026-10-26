@@ -1,5 +1,6 @@
 import { FolderOpen, RefreshCw, Settings as SettingsIcon } from "lucide-react";
 import { Button } from "@/components/common/Button";
+import { LaunchOllamaButton } from "@/components/common/LaunchOllamaButton";
 import { ErrorNotice } from "@/components/common/ErrorNotice";
 import { Logo } from "@/components/common/Logo";
 import { Spinner } from "@/components/common/Spinner";
@@ -51,6 +52,7 @@ function ConnectionPanel() {
         context={{ endpoint }}
         actions={
           <>
+            {error?.kind === "unreachable" && <LaunchOllamaButton />}
             <Button size="sm" onClick={() => void refresh()} icon={<RefreshCw size={13} />}>
               Try again
             </Button>

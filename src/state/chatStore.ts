@@ -1,23 +1,20 @@
-// Chat orchestration: persists the user's message, streams the reply through
-// the active AI provider, runs any tools the model requests (through the
-// tool registry, permissions, and approvals), and persists every step.
+// Chat orchestration: persists the user's message, then hands the request to
+// the AgentRuntime, which plans, calls tools under the permission rules,
+// verifies the result, and reports what happened. This store owns the
+// conversation side: persistence, the streaming display, and controls.
 // Never reports a message as saved unless the repository confirmed it.
-//
-// Tool use is a controlled, bounded cycle — the model requests a tool, the
-// app executes it according to permissions, the result goes back to the
-// model — not an autonomous planning loop.
 
 import { create } from "zustand";
-import { buildSystemPrompt, extractKeywords, keywordPattern, type ProjectContextInput } from "@/agent/context";
+import { extractKeywords, keywordPattern, type ProjectContextInput } from "@/agent/context";
 import { emitDragon } from "@/agent/events";
-import { extractTextToolCalls } from "@/agent/textToolCalls";
-import type { ToolContext } from "@/agent/types";
+import { permissionManager } from "@/agent/runtime/permissionManager";
+import { AgentRuntime } from "@/agent/runtime/runtime";
 import { toVinnieError, VinnieError } from "@/lib/errors";
-import type { ChatTurn, MessageStatus, NewMessage, ToolCall } from "@/lib/ipc/types";
+import type { ChatTurn, NewMessage } from "@/lib/ipc/types";
 import { deriveTitle } from "@/lib/titles";
-import type { GenerationHandle, GenerationOutcome } from "@/providers/types";
 import { getServices } from "@/services";
 import { useActivityStore } from "./activityStore";
+import { limitsFromSettings, useAgentStore } from "./agentStore";
 import { useApprovalStore } from "./approvalStore";
 import { useChangesStore } from "./changesStore";
 import { useConnectionStore } from "./connectionStore";
@@ -29,7 +26,16 @@ import { useTerminalStore } from "./terminalStore";
 import { useUiStore } from "./uiStore";
 import { parentOf, useWorkspaceStore } from "./workspaceStore";
 
-export type GenerationPhase = "preparing" | "context" | "waiting" | "streaming" | "tools" | "stopping";
+export type GenerationPhase =
+  | "preparing"
+  | "context"
+  | "waiting"
+  | "streaming"
+  | "tools"
+  | "permission"
+  | "verifying"
+  | "paused"
+  | "stopping";
 
 export interface ActiveGeneration {
   conversationId: string | null;
@@ -40,6 +46,8 @@ export interface ActiveGeneration {
   startedAt: number;
   /** Description of the tool currently running, if any. */
   toolLabel: string | null;
+  /** The agent task handling this request. */
+  taskId: string | null;
 }
 
 export interface ChatError {
@@ -67,8 +75,6 @@ interface ChatState {
 
 /** How often streamed tokens are flushed into React state. */
 export const FLUSH_INTERVAL_MS = 40;
-/** Upper bound on tool rounds per user message. */
-export const MAX_TOOL_ROUNDS = 8;
 
 /** Convert stored messages into model turns, ending at the last user message. */
 export function buildHistory(messages: UiMessage[]): ChatTurn[] {
@@ -87,13 +93,9 @@ export function buildHistory(messages: UiMessage[]): ChatTurn[] {
   return turns.filter((t, i) => t.role !== "tool" || turns.slice(0, i).some((p) => p.tool_calls?.length));
 }
 
-function toolArgs(call: ToolCall): unknown {
-  return call.function?.arguments ?? {};
-}
-
-let activeHandle: GenerationHandle | null = null;
-let activeAbort: AbortController | null = null;
+let activeRuntime: AgentRuntime | null = null;
 let stopRequested = false;
+const runIds = new Set<string>();
 
 function refreshList() {
   void useConversationStore.getState().loadList();
@@ -172,29 +174,8 @@ export const useChatStore = create<ChatState>((set, get) => {
     }
   }
 
-  function assistantMessage(
-    conversationId: string,
-    fields: { content: string; thinking: string; status: MessageStatus; model: string; error?: string; toolCalls?: ToolCall[] },
-  ): NewMessage {
-    return {
-      conversationId,
-      role: "assistant",
-      content: fields.content,
-      thinking: fields.thinking.trim() ? fields.thinking : null,
-      status: fields.status,
-      model: fields.model,
-      error: fields.error ?? null,
-      toolCalls: fields.toolCalls?.length ? fields.toolCalls : null,
-    };
-  }
-
-  /** Stream one model response. */
-  async function streamOnce(
-    model: string,
-    messages: ChatTurn[],
-    tools: object[] | undefined,
-  ): Promise<{ outcome: GenerationOutcome | null; failure: VinnieError | null }> {
-    patchGeneration({ phase: "waiting", content: "", thinking: "", toolLabel: null });
+  /** Streams model output into the generation bubble, batched for React. */
+  function createStreamSink() {
     let pendingContent = "";
     let pendingThinking = "";
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -221,65 +202,32 @@ export const useChatStore = create<ChatState>((set, get) => {
       timer ??= setTimeout(flush, FLUSH_INTERVAL_MS);
     };
     const markStreaming = () => {
-      if (get().generation?.phase === "waiting") patchGeneration({ phase: "streaming" });
+      const phase = get().generation?.phase;
+      if (phase === "waiting" || phase === "context") patchGeneration({ phase: "streaming" });
     };
-
-    const handle = getServices().provider.streamChat({ model, messages, tools }, (event) => {
-      switch (event.type) {
-        case "started":
-          markStreaming();
-          break;
-        case "content":
-          pendingContent += event.text;
-          markStreaming();
-          schedule();
-          break;
-        case "thinking":
-          pendingThinking += event.text;
-          markStreaming();
-          schedule();
-          break;
-        case "done":
-          break;
-      }
-    });
-    activeHandle = handle;
-    if (stopRequested) void handle.cancel();
-
-    let outcome: GenerationOutcome | null = null;
-    let failure: VinnieError | null = null;
-    try {
-      outcome = await handle.result;
-    } catch (err) {
-      failure = toVinnieError(err);
-    }
-    if (timer) clearTimeout(timer);
-    flush();
-    activeHandle = null;
-    return { outcome, failure };
-  }
-
-  function toolContext(taskId: string, controller: AbortController): ToolContext {
-    const project = useProjectStore.getState().project;
     return {
-      taskId,
-      signal: controller.signal,
-      services: getServices(),
-      permissions: useSettingsStore.getState().settings.permissions,
-      workspaceRoot: project?.path ?? "",
-      requestApproval: (request) => useApprovalStore.getState().request(request, controller.signal),
-      runCommand: (request) => {
-        useUiStore.getState().showBottom("terminal");
-        return useTerminalStore.getState().run({ ...request, actor: "assistant" });
+      reset() {
+        if (timer) clearTimeout(timer);
+        timer = null;
+        pendingContent = "";
+        pendingThinking = "";
+        patchGeneration({ phase: "waiting", content: "", thinking: "", toolLabel: null });
       },
-      filesChanged: (paths) => {
-        void useEditorStore.getState().filesChanged(paths);
-        const ws = useWorkspaceStore.getState();
-        for (const dir of new Set(paths.map(parentOf))) void ws.loadDir(dir);
-        void ws.refreshGit();
-        void useChangesStore.getState().refresh();
+      started: markStreaming,
+      content(text: string) {
+        pendingContent += text;
+        markStreaming();
+        schedule();
       },
-      projectChanged: () => void useWorkspaceStore.getState().analyze(),
+      thinking(text: string) {
+        pendingThinking += text;
+        markStreaming();
+        schedule();
+      },
+      flush() {
+        if (timer) clearTimeout(timer);
+        flush();
+      },
     };
   }
 
@@ -294,130 +242,114 @@ export const useChatStore = create<ChatState>((set, get) => {
         ? convs.messages
         : (await getServices().conversations.listMessages(conversationId)).map(toUiMessage);
     const history = buildHistory(source);
-    if (history.length === 0) {
-      set({ generation: null });
-      return;
-    }
-
-    emitDragon("thinking", `${model} is thinking…`);
-    const settings = useSettingsStore.getState().settings;
-    const project = useProjectStore.getState().project;
-    const registry = getServices().tools;
-    let toolsOn = settings.toolsEnabled && project?.status === "available" && registry.list().length > 0;
+    // The runtime adds the request itself.
+    if (history.at(-1)?.role === "user" && history.at(-1)?.content === userText) history.pop();
 
     patchGeneration({ phase: "context", conversationId });
     const context = await gatherContext(userText);
-    const taskId = crypto.randomUUID();
-    const controller = new AbortController();
-    activeAbort = controller;
-    const ctx = toolContext(taskId, controller);
+    if (stopRequested) {
+      set({ generation: null });
+      return;
+    }
+    const settings = useSettingsStore.getState().settings;
+    const project = useProjectStore.getState().project;
+    const sink = createStreamSink();
     const append = (m: UiMessage) => useConversationStore.getState().appendMessage(conversationId, m);
 
-    let failure: VinnieError | null = null;
-    for (let round = 0; ; round++) {
-      if (stopRequested) break;
-      const system: ChatTurn = { role: "system", content: buildSystemPrompt(context, toolsOn) };
-      const { outcome, failure: streamFailure } = await streamOnce(
+    const runtime = new AgentRuntime(
+      {
+        provider: getServices().provider,
+        registry: getServices().tools,
+        services: getServices(),
+        permissions: permissionManager,
+        settings: () => useSettingsStore.getState().settings,
+        prompt: (request, signal) => useApprovalStore.getState().request(request, signal),
+        runCommand: async (request) => {
+          useUiStore.getState().showBottom("terminal");
+          const before = new Set(useTerminalStore.getState().runs.map((r) => r.id));
+          const promise = useTerminalStore.getState().run({ ...request, actor: "assistant" });
+          const started = useTerminalStore.getState().runs.find((r) => !before.has(r.id));
+          if (started) runIds.add(started.id);
+          return promise;
+        },
+        stopCommands: () => {
+          const terminal = useTerminalStore.getState();
+          for (const run of terminal.runs) {
+            if (run.status === "running" && runIds.has(run.id)) void terminal.stop(run.id);
+          }
+        },
+        filesChanged: (paths) => {
+          void useEditorStore.getState().filesChanged(paths);
+          const ws = useWorkspaceStore.getState();
+          for (const dir of new Set(paths.map(parentOf))) void ws.loadDir(dir);
+          void ws.refreshGit();
+          void useChangesStore.getState().refresh();
+        },
+        projectChanged: () => void useWorkspaceStore.getState().analyze(),
+        metadata: () => useWorkspaceStore.getState().metadata,
+        refreshMetadata: async () => {
+          await useWorkspaceStore.getState().analyze();
+          return useWorkspaceStore.getState().metadata;
+        },
+        persist: async (message) => {
+          sink.flush();
+          const saved = await persist(message);
+          // Show the saved message and clear the live bubble in the same tick.
+          append(saved);
+          patchGeneration({ content: "", thinking: "" });
+        },
+        stream: sink,
+        modelContextLength: async (m) => (await getServices().provider.modelDetails(m)).contextLength,
+        onUpdate: (task) => {
+          useAgentStore.getState().update(task);
+          const running = [...task.steps].reverse().find((s) => s.status === "running");
+          switch (task.status) {
+            case "executing":
+              patchGeneration({ phase: "tools", toolLabel: running?.title ?? null });
+              break;
+            case "waiting_for_permission":
+              patchGeneration({ phase: "permission", toolLabel: "Waiting for your approval" });
+              break;
+            case "verifying":
+              patchGeneration({ phase: "verifying", toolLabel: running?.title ?? "Verifying changes" });
+              break;
+            case "paused":
+              patchGeneration({ phase: "paused", toolLabel: "Paused" });
+              break;
+            default:
+              break;
+          }
+        },
+        notice: (text) => set({ notice: text }),
+      },
+      {
+        conversationId,
+        request: userText,
         model,
-        [system, ...history],
-        toolsOn ? registry.specs() : undefined,
-      );
+        history,
+        project: context,
+        workspaceRoot: project?.status === "available" ? project.path : null,
+        mode: settings.agent.mode,
+        limits: limitsFromSettings(settings.agent),
+        autoVerify: settings.agent.autoVerify,
+        toolsEnabled: settings.toolsEnabled,
+      },
+    );
+    activeRuntime = runtime;
+    useAgentStore.getState().begin(runtime);
+    patchGeneration({ taskId: runtime.task.id });
 
-      if (streamFailure?.kind === "tools_unsupported" && toolsOn) {
-        toolsOn = false;
-        set({ notice: `${model} doesn't support tools, so Vinnie answered without project tools this time.` });
-        round--;
-        continue;
-      }
-
-      const streamed = get().generation;
-      let content = outcome?.content ?? streamed?.content ?? "";
-      const thinking = outcome?.thinking ?? streamed?.thinking ?? "";
-      let calls = toolsOn ? (outcome?.toolCalls ?? []) : [];
-      if (toolsOn && calls.length === 0 && outcome?.status === "completed") {
-        const recovered = extractTextToolCalls(content, new Set(registry.list().map((t) => t.name)));
-        if (recovered.length > 0) {
-          calls = recovered;
-          content = "";
-        }
-      }
-      const hasOutput = content.length > 0 || thinking.trim().length > 0 || calls.length > 0;
-
-      if (outcome?.status === "completed") {
-        append(await persist(assistantMessage(conversationId, { content, thinking, status: "complete", model, toolCalls: calls })));
-      } else if (hasOutput) {
-        // Cancelled or failed partway: keep what was generated, clearly marked.
-        append(
-          await persist(
-            assistantMessage(conversationId, {
-              content,
-              thinking,
-              status: "interrupted",
-              model,
-              error: streamFailure?.message,
-            }),
-          ),
-        );
-      }
-      patchGeneration({ content: "", thinking: "" });
-
-      if (streamFailure) {
-        failure = streamFailure;
-        break;
-      }
-      if (outcome?.status !== "completed" || calls.length === 0) break;
-      if (round >= MAX_TOOL_ROUNDS) {
-        failure = new VinnieError(
-          "busy",
-          `Stopped after ${MAX_TOOL_ROUNDS} rounds of tool use. Ask Vinnie to continue if more steps are needed.`,
-        );
-        break;
-      }
-
-      history.push({ role: "assistant", content, tool_calls: calls });
-      for (const call of calls) {
-        const name = call.function?.name ?? "";
-        const tool = registry.get(name);
-        let resultText: string;
-        if (stopRequested) {
-          resultText = "Error: the user stopped this request before the tool ran.";
-        } else {
-          const label = tool ? safeDescribe(tool.describe, toolArgs(call), name) : `Calling ${name}`;
-          patchGeneration({ phase: "tools", toolLabel: label });
-          const activityId = useActivityStore.getState().start(tool?.activityKind ?? "error", label);
-          const result = await registry.execute(name, toolArgs(call), ctx);
-          resultText = result.ok ? result.content : `Error: ${result.error}`;
-          useActivityStore
-            .getState()
-            .finish(
-              activityId,
-              result.ok ? "success" : result.kind === "denied" ? "denied" : "error",
-              result.ok ? firstLine(result.content) : result.error,
-            );
-        }
-        append(
-          await persist({
-            conversationId,
-            role: "tool",
-            content: resultText,
-            toolName: /^[A-Za-z0-9_]{1,64}$/.test(name) ? name : null,
-            status: "complete",
-          }),
-        );
-        history.push({ role: "tool", content: resultText, ...(name ? { tool_name: name } : {}) });
-      }
-      emitDragon("thinking", `${model} is reviewing the results…`);
-    }
-
-    activeAbort = null;
+    const task = await runtime.run();
+    activeRuntime = null;
+    runIds.clear();
+    useAgentStore.getState().end(task.id);
     useApprovalStore.getState().denyAll();
+    const modelError = runtime.modelError;
     set({
       generation: null,
-      error: failure ? { conversationId, error: failure, model, canRetry: failure.kind !== "busy" } : get().error,
+      error: modelError ? { conversationId, error: modelError, model, canRetry: true } : get().error,
     });
-    if (failure) emitDragon("error", failure.message);
-    else if (!stopRequested) emitDragon("success", "Response complete");
-    else emitDragon("idle", "Idle");
+    if (task.status === "cancelled") emitDragon("idle", "Idle");
   }
 
   return {
@@ -454,6 +386,7 @@ export const useChatStore = create<ChatState>((set, get) => {
           thinking: "",
           startedAt: Date.now(),
           toolLabel: null,
+          taskId: null,
         },
       });
 
@@ -487,8 +420,7 @@ export const useChatStore = create<ChatState>((set, get) => {
       refreshList();
       const id = conversationId;
       void runGeneration(id, model, content).catch((err: unknown) => {
-        activeHandle = null;
-        activeAbort = null;
+        activeRuntime = null;
         set({ generation: null, error: { conversationId: id, error: toVinnieError(err), model, canRetry: true } });
       });
       return true;
@@ -498,13 +430,8 @@ export const useChatStore = create<ChatState>((set, get) => {
       if (!get().generation) return;
       stopRequested = true;
       patchGeneration({ phase: "stopping" });
-      activeAbort?.abort();
       useApprovalStore.getState().denyAll();
-      const terminal = useTerminalStore.getState();
-      for (const run of terminal.runs) {
-        if (run.status === "running" && run.actor === "assistant") void terminal.stop(run.id);
-      }
-      if (activeHandle) await activeHandle.cancel();
+      activeRuntime?.cancel();
     },
 
     async retry() {
@@ -534,11 +461,11 @@ export const useChatStore = create<ChatState>((set, get) => {
           thinking: "",
           startedAt: Date.now(),
           toolLabel: null,
+          taskId: null,
         },
       });
       void runGeneration(conversationId, model, lastUser?.content ?? "").catch((err: unknown) => {
-        activeHandle = null;
-        activeAbort = null;
+        activeRuntime = null;
         set({ generation: null, error: { conversationId, error: toVinnieError(err), model, canRetry: true } });
       });
     },
@@ -578,17 +505,3 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
   };
 });
-
-function safeDescribe(describe: (input: never) => string, args: unknown, name: string): string {
-  try {
-    const parsed = typeof args === "string" ? JSON.parse(args) : args;
-    return describe(parsed as never);
-  } catch {
-    return `Calling ${name}`;
-  }
-}
-
-function firstLine(text: string): string {
-  const line = text.split("\n", 1)[0] ?? "";
-  return line.length > 160 ? `${line.slice(0, 160)}…` : line;
-}

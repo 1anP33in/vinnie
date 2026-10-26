@@ -136,6 +136,8 @@ pub fn run() {
             commands::analysis::detect_package_managers,
             commands::analysis::build_install_command,
             commands::app::open_log_dir,
+            commands::chat::model_details,
+            commands::chat::launch_ollama,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Vinnie");

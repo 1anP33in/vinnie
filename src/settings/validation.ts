@@ -30,6 +30,18 @@ export const DEFAULT_SETTINGS: Settings = {
   ignoredDirectories: DEFAULT_IGNORED_DIRECTORIES,
   toolsEnabled: true,
   projectContextEnabled: true,
+  agent: {
+    mode: "agent",
+    maxIterations: 25,
+    maxToolCalls: 60,
+    maxRetries: 2,
+    commandTimeoutSecs: 600,
+    taskTimeoutMins: 30,
+    maxChangedFiles: 20,
+    contextBudget: 0,
+    autoVerify: true,
+    debugView: false,
+  },
 };
 
 export type SettingsErrors = Partial<Record<keyof Settings, string>>;
@@ -70,8 +82,28 @@ export function validateIgnoredDirectories(names: string[]): string | null {
   return null;
 }
 
+const AGENT_RANGES: [keyof Settings["agent"], string, number, number][] = [
+  ["maxIterations", "Maximum iterations", 1, 200],
+  ["maxToolCalls", "Maximum tool calls", 1, 500],
+  ["maxRetries", "Maximum retries", 0, 10],
+  ["commandTimeoutSecs", "Command timeout", 5, 3600],
+  ["taskTimeoutMins", "Task timeout", 1, 240],
+  ["maxChangedFiles", "Maximum changed files", 1, 500],
+];
+
+export function validateAgentSettings(agent: Settings["agent"]): string | null {
+  for (const [key, label, min, max] of AGENT_RANGES) {
+    const v = agent[key] as number;
+    if (!Number.isInteger(v) || v < min || v > max) return `${label} must be between ${min} and ${max}.`;
+  }
+  if (![0, 4096, 8192, 16384, 32768].includes(agent.contextBudget)) return "Choose a supported context budget.";
+  return null;
+}
+
 export function validateSettings(settings: Settings): SettingsErrors {
   const errors: SettingsErrors = {};
+  const agent = validateAgentSettings(settings.agent);
+  if (agent) errors.agent = agent;
   const ignored = validateIgnoredDirectories(settings.ignoredDirectories);
   if (ignored) errors.ignoredDirectories = ignored;
   const endpoint = validateEndpoint(settings.ollamaEndpoint);
