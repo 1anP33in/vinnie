@@ -133,6 +133,8 @@ export interface AgentTask {
   steps: AgentStep[];
   memory: string[];
   changes: TaskChange[];
+  /** Skills used for this task, and why they were chosen. */
+  skills: { id: string; name: string; reasons: string[]; manual: boolean }[];
   startedAt: number;
   completedAt?: number;
   iteration: number;

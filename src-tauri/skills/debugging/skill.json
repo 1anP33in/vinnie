@@ -1,0 +1,30 @@
+{
+  "id": "debugging",
+  "name": "Debugging",
+  "description": "Systematic debugging: reproduce, isolate, find the root cause, and verify the fix.",
+  "version": "1.0.0",
+  "author": "Vinnie",
+  "tags": [
+    "debugging",
+    "errors"
+  ],
+  "match": {
+    "keywords": [
+      "bug",
+      "error",
+      "crash",
+      "exception",
+      "broken",
+      "failing",
+      "fails",
+      "doesn't work",
+      "not working",
+      "stack trace",
+      "debug",
+      "fix"
+    ],
+    "languages": [],
+    "projectTypes": []
+  },
+  "tools": []
+}

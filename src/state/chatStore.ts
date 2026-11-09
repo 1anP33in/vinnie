@@ -22,6 +22,7 @@ import { toUiMessage, useConversationStore, type UiMessage } from "./conversatio
 import { useEditorStore } from "./editorStore";
 import { useProjectStore } from "./projectStore";
 import { useSettingsStore } from "./settingsStore";
+import { useSkillStore } from "./skillStore";
 import { useTerminalStore } from "./terminalStore";
 import { useUiStore } from "./uiStore";
 import { parentOf, useWorkspaceStore } from "./workspaceStore";
@@ -253,6 +254,15 @@ export const useChatStore = create<ChatState>((set, get) => {
     }
     const settings = useSettingsStore.getState().settings;
     const project = useProjectStore.getState().project;
+    // Only the skills relevant to this request are loaded into the context.
+    const skills = await useSkillStore
+      .getState()
+      .activate(userText, project?.status === "available" ? useWorkspaceStore.getState().metadata : null)
+      .catch(() => []);
+    if (stopRequested) {
+      set({ generation: null });
+      return;
+    }
     const sink = createStreamSink();
     const append = (m: UiMessage) => useConversationStore.getState().appendMessage(conversationId, m);
 
@@ -333,6 +343,7 @@ export const useChatStore = create<ChatState>((set, get) => {
         limits: limitsFromSettings(settings.agent),
         autoVerify: settings.agent.autoVerify,
         toolsEnabled: settings.toolsEnabled,
+        skills,
       },
     );
     activeRuntime = runtime;

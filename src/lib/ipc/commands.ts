@@ -20,6 +20,19 @@ import type {
   GitStatus,
   InstallCommand,
   LaunchResult,
+  McpHttpBodyEvent,
+  McpHttpRequest,
+  McpHttpResponseHead,
+  McpLogEntry,
+  McpServerConfig,
+  McpServerInput,
+  McpStdioEvent,
+  SecretChanges,
+  SkillBundle,
+  SkillDetail,
+  SkillMeta,
+  SkillSummary,
+  ToolSetting,
   ManagerDetection,
   ModelDetails,
   ProcessEvent,
@@ -132,5 +145,50 @@ export const commands = {
   launchOllama: () => call<LaunchResult>("launch_ollama"),
   buildInstallCommand: (manager: string, packages: string[], dev = false) =>
     call<InstallCommand>("build_install_command", { manager, packages, dev }),
+
+  // MCP servers. The backend reads each server's command, URL, and secrets from
+  // its own store; the frontend only names the server.
+  mcpListServers: () => call<McpServerConfig[]>("mcp_list_servers"),
+  mcpSaveServer: (server: McpServerInput, secrets: SecretChanges, isNew: boolean) =>
+    call<McpServerConfig>("mcp_save_server", { server, secrets, isNew }),
+  mcpDeleteServer: (id: string) => call<void>("mcp_delete_server", { id }),
+  mcpMarkConnected: (id: string) => call<void>("mcp_mark_connected", { id }),
+  mcpStdioStart: (serverId: string, onEvent: (event: McpStdioEvent) => void) => {
+    const channel = new Channel<McpStdioEvent>();
+    channel.onmessage = onEvent;
+    return call<{ pid: number }>("mcp_stdio_start", { serverId, onEvent: channel });
+  },
+  mcpStdioSend: (serverId: string, line: string) => call<void>("mcp_stdio_send", { serverId, line }),
+  mcpStdioStop: (serverId: string) => call<boolean>("mcp_stdio_stop", { serverId }),
+  mcpHttpFetch: (serverId: string, request: McpHttpRequest, onBody: (event: McpHttpBodyEvent) => void) => {
+    const channel = new Channel<McpHttpBodyEvent>();
+    channel.onmessage = onBody;
+    return call<McpHttpResponseHead>("mcp_http_fetch", { serverId, request, onBody: channel });
+  },
+  mcpHttpAbort: (requestId: string) => call<boolean>("mcp_http_abort", { requestId }),
+  mcpServerLogs: (serverId: string) => call<McpLogEntry[]>("mcp_server_logs", { serverId }),
+
+  toolSettingsList: () => call<ToolSetting[]>("tool_settings_list"),
+  toolSettingsSave: (setting: Pick<ToolSetting, "key" | "enabled" | "policy">) =>
+    call<ToolSetting>("tool_settings_save", { setting }),
+  toolSettingsRecordRun: (key: string, outcome: string) => call<void>("tool_settings_record_run", { key, outcome }),
+
+  skillsList: () => call<SkillSummary[]>("skills_list"),
+  skillsRead: (id: string) => call<SkillDetail>("skills_read", { id }),
+  skillsSave: (meta: SkillMeta, instructions: string, isNew: boolean) =>
+    call<SkillSummary>("skills_save", { meta, instructions, isNew }),
+  skillsDelete: (id: string) => call<void>("skills_delete", { id }),
+  skillsSetEnabled: (id: string, enabled: boolean) => call<void>("skills_set_enabled", { id, enabled }),
+  skillsReadReference: (id: string, name: string) => call<string>("skills_read_reference", { id, name }),
+  skillsSaveReference: (id: string, name: string, content: string) =>
+    call<void>("skills_save_reference", { id, name, content }),
+  skillsDeleteReference: (id: string, name: string) => call<void>("skills_delete_reference", { id, name }),
+  skillsExport: (id: string) => call<SkillBundle>("skills_export", { id }),
+  skillsImport: (bundle: SkillBundle, overwrite: boolean) => call<SkillSummary>("skills_import", { bundle, overwrite }),
+
+  /** Native save/open dialogs for small text files (import/export). */
+  saveTextFile: (defaultName: string, content: string) =>
+    call<string | null>("save_text_file", { defaultName, content }),
+  openTextFile: () => call<{ name: string; content: string } | null>("open_text_file"),
 };
 

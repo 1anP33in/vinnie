@@ -9,7 +9,7 @@ import { registerWorkspaceTools } from "../tools";
 import type { ApprovalDecision, ApprovalRequest } from "../types";
 import { onAgentEvent, type AgentEvent } from "./events";
 import { PermissionManager } from "./permissionManager";
-import { AgentRuntime, type RunInput, type RuntimeDeps } from "./runtime";
+import { AgentRuntime, type RunInput, type RunSkill, type RuntimeDeps } from "./runtime";
 import { DEFAULT_LIMITS, type AgentLimits, type AgentMode } from "./types";
 
 let fakes: ReturnType<typeof installFakes>;
@@ -37,7 +37,10 @@ beforeEach(() => {
 
 afterEach(() => unsubscribe());
 
-function makeRuntime(request: string, opts: { mode?: AgentMode; limits?: Partial<AgentLimits>; autoVerify?: boolean } = {}) {
+function makeRuntime(
+  request: string,
+  opts: { mode?: AgentMode; limits?: Partial<AgentLimits>; autoVerify?: boolean; skills?: RunSkill[] } = {},
+) {
   const registry = createToolRegistry();
   registerWorkspaceTools(registry);
   const deps: RuntimeDeps = {
@@ -80,6 +83,7 @@ function makeRuntime(request: string, opts: { mode?: AgentMode; limits?: Partial
     limits: { ...DEFAULT_LIMITS, ...opts.limits },
     autoVerify: opts.autoVerify ?? true,
     toolsEnabled: true,
+    skills: opts.skills ?? [],
   };
   return new AgentRuntime(deps, input);
 }

@@ -15,10 +15,15 @@ import type {
 } from "@/lib/ipc/types";
 import type { Services } from "@/services";
 import type { ActivityKind } from "@/state/activityStore";
+import type { ToolPermission } from "@/mcp/classify";
+import type { ToolPolicy } from "@/lib/ipc/types";
 import type { FailureCode } from "./runtime/recovery";
 import type { AgentMode, PlanStepStatus } from "./runtime/types";
 
-export type ToolCategory = "READ" | "SEARCH" | "WRITE" | "DELETE" | "EXECUTE" | "DEPENDENCY" | "PROJECT";
+export type ToolCategory = "READ" | "SEARCH" | "WRITE" | "DELETE" | "EXECUTE" | "DEPENDENCY" | "PROJECT" | "EXTERNAL";
+
+/** Where a tool comes from. */
+export type ToolSource = "native" | "mcp";
 
 /** Safe: no side effects. Moderate: changes files (reversible). High: runs programs or installs. */
 export type ToolRiskLevel = "safe" | "moderate" | "high";
@@ -81,7 +86,21 @@ export type ApprovalRequest =
       };
     }
   | { kind: "file"; operation: FileOperation; preview: ChangePreview; reason: string | null; workspace: string }
-  | { kind: "read"; path: string; reason: string | null; workspace: string };
+  | { kind: "read"; path: string; reason: string | null; workspace: string }
+  | {
+      kind: "mcp";
+      server: { id: string; name: string };
+      /** The tool's original name on the server. */
+      tool: string;
+      /** Arguments the model wants to send (shown to the user, secrets redacted by the card). */
+      arguments: Record<string, unknown>;
+      permission: ToolPermission;
+      /** Irreversible: needs explicit confirmation, never remembered. */
+      destructive: boolean;
+      policy: ToolPolicy;
+      reason: string | null;
+      workspace: string;
+    };
 
 export interface ApprovalDecision {
   approved: boolean;
@@ -128,7 +147,10 @@ export interface ToolContext {
    * permission settings, and any scoped grants, and asks the user if needed.
    * The model has no access to this.
    */
-  authorize(request: ApprovalRequest, capability: "write" | "delete" | "execute" | "install" | "read"): Promise<Authorization>;
+  authorize(
+    request: ApprovalRequest,
+    capability: "write" | "delete" | "execute" | "install" | "read" | "external",
+  ): Promise<Authorization>;
   /** Run a command through the terminal (so output is visible to the user). */
   runCommand(request: CommandRequest): Promise<RunResult>;
   /** Tell the UI which files changed so open editors and the explorer refresh. */
@@ -153,6 +175,17 @@ export interface VinnieTool<Input = unknown> {
   category: ToolCategory;
   riskLevel: ToolRiskLevel;
   activityKind: ActivityKind;
+  /** Native (built in) or from an MCP server. Defaults to native. */
+  source?: ToolSource;
+  /** Key for the user's tool settings; defaults to `name`. */
+  settingsKey?: string;
+  /** Name shown to the user, e.g. `github.list_issues`. Defaults to `name`. */
+  displayName?: string;
+  serverId?: string;
+  /** Permission category (MCP tools). */
+  permission?: ToolPermission;
+  /** False while the tool can't run (e.g. its MCP server is disconnected). */
+  available?(): boolean;
   /** Short label for the activity feed, e.g. "Reading client/main.lua". */
   describe(input: Input): string;
   execute(input: Input, context: ToolContext): Promise<ToolResult>;
@@ -164,6 +197,15 @@ export interface ToolDefinition {
   inputSchema: Record<string, unknown>;
   category: ToolCategory;
   riskLevel: ToolRiskLevel;
+  source: ToolSource;
+  settingsKey: string;
+  displayName: string;
+  serverId?: string;
+  permission?: ToolPermission;
+  /** The user has not disabled it. */
+  enabled: boolean;
+  /** It can run right now (its server is connected). */
+  available: boolean;
 }
 
 export interface ToolRegistry {
@@ -173,8 +215,13 @@ export interface ToolRegistry {
   list(): ToolDefinition[];
   /** Tool specs in Ollama's function-calling format (optionally a subset). */
   specs(names?: readonly string[]): object[];
-  /** Validate input and execute; never throws. */
+  /** Validate input and execute; never throws. Disabled and unavailable tools are refused. */
   execute(name: string, input: unknown, context: ToolContext): Promise<ToolResult>;
+  /** Install the check for the user's per-tool enable switch (by settings key). */
+  setEnabledCheck(check: (settingsKey: string) => boolean): void;
+  isEnabled(name: string): boolean;
+  /** Notified when tools are registered or removed (e.g. MCP discovery). */
+  subscribe(listener: () => void): () => void;
 }
 
 export type { RunResult };

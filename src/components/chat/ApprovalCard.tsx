@@ -1,8 +1,10 @@
-import { FileWarning, Package, ShieldQuestion, Terminal } from "lucide-react";
+import { FileWarning, Package, Plug, ShieldQuestion, Terminal } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/common/Button";
 import { DiffView } from "@/components/editor/DiffView";
+import { redact } from "@/agent/runtime/redact";
 import type { ApprovalRequest, PermissionScope } from "@/agent/types";
+import { PERMISSION_LABEL } from "@/mcp/classify";
 import { useEditorStore } from "@/state/editorStore";
 import { useApprovalStore, type PendingApproval } from "@/state/approvalStore";
 
@@ -69,10 +71,52 @@ function CommandBody({ request, manager, setManager }: {
   );
 }
 
+/** One argument value, shortened for the card (secrets already redacted). */
+function argText(value: unknown): string {
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  if (text === undefined) return String(value);
+  return text.length > 400 ? `${text.slice(0, 400)}… (${text.length - 400} more characters)` : text;
+}
+
+function McpBody({ request }: { request: Extract<ApprovalRequest, { kind: "mcp" }> }) {
+  const args = Object.entries(redact(request.arguments) as Record<string, unknown>);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Field label="Server">{request.server.name}</Field>
+      <Field label="Tool" mono>
+        <span data-testid="approval-tool">{request.tool}</span>
+      </Field>
+      {args.length === 0 ? (
+        <Field label="Arguments">
+          <span className="text-faint">none</span>
+        </Field>
+      ) : (
+        args.slice(0, 12).map(([k, v]) => (
+          <Field key={k} label={k} mono>
+            <span className="whitespace-pre-wrap">{argText(v)}</span>
+          </Field>
+        ))
+      )}
+      {args.length > 12 && <p className="text-xs text-faint">… {args.length - 12} more arguments</p>}
+      {request.reason && <Field label="Reason">{request.reason}</Field>}
+      <Field label="Risk">
+        <span className={request.destructive ? "text-danger" : "text-warning"}>
+          {PERMISSION_LABEL[request.permission]}
+          {request.destructive ? " — destructive, may not be reversible" : " — acts outside your project"}
+        </span>
+      </Field>
+      <p className="text-xs text-faint">
+        This runs on an external MCP server. Vinnie can't undo it from the Changes panel.
+      </p>
+    </div>
+  );
+}
+
 function ApprovalItem({ item }: { item: PendingApproval }) {
   const respond = useApprovalStore((s) => s.respond);
   const { request } = item;
   const [manager, setManager] = useState(request.kind === "command" ? (request.install?.manager ?? "") : "");
+  const [confirmed, setConfirmed] = useState(false);
 
   let icon: React.ReactNode;
   let title: string;
@@ -176,6 +220,46 @@ function ApprovalItem({ item }: { item: PendingApproval }) {
             View changes
           </Button>
         )}
+      </>
+    );
+  } else if (request.kind === "mcp") {
+    icon = <Plug size={15} className={request.destructive ? "text-danger" : "text-accent"} />;
+    title = `Vinnie wants to use ${request.server.name}:`;
+    body = (
+      <>
+        <McpBody request={request} />
+        {request.destructive && (
+          <label className="mt-2 flex items-center gap-2 text-xs text-danger">
+            <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
+            I understand this may permanently delete or change data on {request.server.name}.
+          </label>
+        )}
+      </>
+    );
+    const decide = (approved: boolean, scope: PermissionScope = "once") => respond(item.id, { approved, scope });
+    actions = (
+      <>
+        <Button
+          size="sm"
+          variant={request.destructive ? "danger" : "primary"}
+          disabled={request.destructive && !confirmed}
+          onClick={() => decide(true)}
+        >
+          Allow once
+        </Button>
+        {!request.destructive && (
+          <>
+            <Button size="sm" onClick={() => decide(true, "task")} title={`Allow ${request.tool} until the current task ends`}>
+              Allow for this task
+            </Button>
+            <Button size="sm" onClick={() => decide(true, "session")} title={`Allow ${request.tool} until Vinnie restarts`}>
+              Allow for session
+            </Button>
+          </>
+        )}
+        <Button size="sm" variant={request.destructive ? "secondary" : "danger"} onClick={() => decide(false)}>
+          Deny
+        </Button>
       </>
     );
   } else {

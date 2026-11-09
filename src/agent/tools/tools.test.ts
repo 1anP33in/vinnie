@@ -78,6 +78,7 @@ describe("workspace tools", () => {
       "update_plan",
       "remember",
       "get_project_info",
+      "read_skill_reference",
     ]);
   });
 

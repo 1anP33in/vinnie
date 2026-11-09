@@ -1,4 +1,6 @@
 import {
+  BookOpen,
+  Plug,
   AlertTriangle,
   Ban,
   Check,
@@ -29,6 +31,8 @@ const ICONS: Record<ActivityKind, LucideIcon> = {
   analysis: ScanSearch,
   approval: Hand,
   model: Sparkles,
+  mcp: Plug,
+  skill: BookOpen,
   error: AlertTriangle,
 };
 

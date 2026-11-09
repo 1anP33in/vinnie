@@ -2,6 +2,7 @@
 // real runtime event (tool start/finish, verification, task start/end).
 
 import { onAgentEvent } from "@/agent/runtime/events";
+import { onIntegrationEvent } from "@/mcp/events";
 import { useActivityStore, type ActivityKind } from "./activityStore";
 
 const KIND_BY_CATEGORY: Record<string, ActivityKind> = {
@@ -12,6 +13,7 @@ const KIND_BY_CATEGORY: Record<string, ActivityKind> = {
   DELETE: "write",
   EXECUTE: "command",
   DEPENDENCY: "install",
+  EXTERNAL: "mcp",
 };
 
 let installed = false;
@@ -67,6 +69,55 @@ export function bridgeAgentEventsToActivity(): void {
         open.delete(`task:${e.taskId}`);
         break;
       }
+      default:
+        break;
+    }
+  });
+}
+
+let integrationsInstalled = false;
+
+/**
+ * Mirror MCP and skill events into the activity feed. Tool calls already
+ * appear through the agent events, so only connection and skill events are
+ * added here.
+ */
+export function bridgeIntegrationEventsToActivity(): void {
+  if (integrationsInstalled) return;
+  integrationsInstalled = true;
+  const connecting = new Map<string, string>(); // server id -> activity id
+  const activity = () => useActivityStore.getState();
+  const instant = (kind: ActivityKind, title: string, status: "success" | "error", details?: string) => {
+    activity().finish(activity().start(kind, title), status, details ?? null);
+  };
+
+  onIntegrationEvent((e) => {
+    switch (e.type) {
+      case "mcp.server_connecting":
+        if (e.serverId) connecting.set(e.serverId, activity().start("mcp", e.label));
+        break;
+      case "mcp.server_connected":
+      case "mcp.server_error": {
+        const id = e.serverId ? connecting.get(e.serverId) : undefined;
+        const status = e.type === "mcp.server_connected" ? "success" : "error";
+        if (id) activity().finish(id, status, e.detail ?? e.label);
+        else instant("mcp", e.label, status, e.detail);
+        if (e.serverId) connecting.delete(e.serverId);
+        break;
+      }
+      case "mcp.server_disconnected":
+        instant("mcp", e.label, "success");
+        break;
+      case "mcp.tool_rejected":
+        instant("mcp", e.label, "error", e.detail);
+        break;
+      case "skill.activated":
+      case "skill.deactivated":
+        instant("skill", e.label, "success", e.detail);
+        break;
+      case "skill.failed":
+        instant("skill", e.label, "error", e.detail);
+        break;
       default:
         break;
     }

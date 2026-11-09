@@ -21,6 +21,19 @@ import type {
   InstallCommand,
   LaunchResult,
   ManagerDetection,
+  McpHttpBodyEvent,
+  McpHttpRequest,
+  McpHttpResponseHead,
+  McpLogEntry,
+  McpServerConfig,
+  McpServerInput,
+  McpStdioEvent,
+  SecretChanges,
+  SkillBundle,
+  SkillDetail,
+  SkillMeta,
+  SkillSummary,
+  ToolSetting,
   ProcessEvent,
   ProjectMetadata,
   ProjectTree,
@@ -94,6 +107,45 @@ export interface ProjectAnalysisService {
   installCommand(manager: string, packages: string[], dev?: boolean): Promise<InstallCommand>;
 }
 
+/** MCP server configuration and the backend side of the transports. */
+export interface McpService {
+  list(): Promise<McpServerConfig[]>;
+  save(server: McpServerInput, secrets: SecretChanges, isNew: boolean): Promise<McpServerConfig>;
+  remove(id: string): Promise<void>;
+  markConnected(id: string): Promise<void>;
+  stdioStart(serverId: string, onEvent: (event: McpStdioEvent) => void): Promise<{ pid: number }>;
+  stdioSend(serverId: string, line: string): Promise<void>;
+  stdioStop(serverId: string): Promise<boolean>;
+  httpFetch(serverId: string, request: McpHttpRequest, onBody: (event: McpHttpBodyEvent) => void): Promise<McpHttpResponseHead>;
+  httpAbort(requestId: string): Promise<boolean>;
+  logs(serverId: string): Promise<McpLogEntry[]>;
+}
+
+export interface ToolSettingsService {
+  list(): Promise<ToolSetting[]>;
+  save(setting: Pick<ToolSetting, "key" | "enabled" | "policy">): Promise<ToolSetting>;
+  recordRun(key: string, outcome: string): Promise<void>;
+}
+
+export interface SkillService {
+  list(): Promise<SkillSummary[]>;
+  read(id: string): Promise<SkillDetail>;
+  save(meta: SkillMeta, instructions: string, isNew: boolean): Promise<SkillSummary>;
+  remove(id: string): Promise<void>;
+  setEnabled(id: string, enabled: boolean): Promise<void>;
+  readReference(id: string, name: string): Promise<string>;
+  saveReference(id: string, name: string, content: string): Promise<void>;
+  deleteReference(id: string, name: string): Promise<void>;
+  exportBundle(id: string): Promise<SkillBundle>;
+  importBundle(bundle: SkillBundle, overwrite: boolean): Promise<SkillSummary>;
+}
+
+/** Small text files chosen by the user through native dialogs. */
+export interface FileDialogService {
+  saveText(defaultName: string, content: string): Promise<string | null>;
+  openText(): Promise<{ name: string; content: string } | null>;
+}
+
 export interface Services {
   provider: AIProvider;
   conversations: ConversationRepository;
@@ -106,6 +158,10 @@ export interface Services {
   changes: ChangeService;
   process: ProcessService;
   analysis: ProjectAnalysisService;
+  mcp: McpService;
+  toolSettings: ToolSettingsService;
+  skills: SkillService;
+  dialogs: FileDialogService;
 }
 
 function createDefaultServices(): Services {
@@ -155,6 +211,36 @@ function createDefaultServices(): Services {
       packageManagers: commands.detectPackageManagers,
       installCommand: commands.buildInstallCommand,
     },
+    mcp: {
+      list: commands.mcpListServers,
+      save: commands.mcpSaveServer,
+      remove: commands.mcpDeleteServer,
+      markConnected: commands.mcpMarkConnected,
+      stdioStart: commands.mcpStdioStart,
+      stdioSend: commands.mcpStdioSend,
+      stdioStop: commands.mcpStdioStop,
+      httpFetch: commands.mcpHttpFetch,
+      httpAbort: commands.mcpHttpAbort,
+      logs: commands.mcpServerLogs,
+    },
+    toolSettings: {
+      list: commands.toolSettingsList,
+      save: commands.toolSettingsSave,
+      recordRun: commands.toolSettingsRecordRun,
+    },
+    skills: {
+      list: commands.skillsList,
+      read: commands.skillsRead,
+      save: commands.skillsSave,
+      remove: commands.skillsDelete,
+      setEnabled: commands.skillsSetEnabled,
+      readReference: commands.skillsReadReference,
+      saveReference: commands.skillsSaveReference,
+      deleteReference: commands.skillsDeleteReference,
+      exportBundle: commands.skillsExport,
+      importBundle: commands.skillsImport,
+    },
+    dialogs: { saveText: commands.saveTextFile, openText: commands.openTextFile },
   };
 }
 

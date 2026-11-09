@@ -96,6 +96,31 @@ const MIGRATIONS: &[&str] = &[
         analyzed_at  INTEGER NOT NULL
     );
     "#,
+    // v3 (Phase 4): MCP server configurations (never secrets; those live in
+    // Windows Credential Manager), per-tool settings, and skill switches.
+    r#"
+    CREATE TABLE mcp_servers (
+        id                 TEXT PRIMARY KEY NOT NULL,
+        data               TEXT NOT NULL,
+        last_connected_at  INTEGER,
+        created_at         INTEGER NOT NULL,
+        updated_at         INTEGER NOT NULL
+    );
+
+    CREATE TABLE tool_settings (
+        key           TEXT PRIMARY KEY NOT NULL,
+        enabled       INTEGER NOT NULL DEFAULT 1,
+        policy        TEXT CHECK (policy IN ('ask', 'allow', 'deny')),
+        run_count     INTEGER NOT NULL DEFAULT 0,
+        last_run_at   INTEGER,
+        last_outcome  TEXT
+    );
+
+    CREATE TABLE skill_settings (
+        id       TEXT PRIMARY KEY NOT NULL,
+        enabled  INTEGER NOT NULL DEFAULT 1
+    );
+    "#,
 ];
 
 pub fn run(conn: &mut Connection) -> AppResult<()> {

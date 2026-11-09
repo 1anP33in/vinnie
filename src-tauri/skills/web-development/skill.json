@@ -1,0 +1,44 @@
+{
+  "id": "web-development",
+  "name": "Web Development",
+  "description": "Front-end and Node.js work: HTML, CSS, JavaScript, React, APIs, and build tooling.",
+  "version": "1.0.0",
+  "author": "Vinnie",
+  "tags": [
+    "web",
+    "javascript",
+    "react",
+    "node"
+  ],
+  "match": {
+    "keywords": [
+      "react",
+      "html",
+      "css",
+      "frontend",
+      "backend",
+      "express",
+      "api",
+      "endpoint",
+      "component",
+      "vite",
+      "next.js",
+      "nextjs",
+      "tailwind",
+      "dashboard",
+      "website",
+      "web app",
+      "node"
+    ],
+    "languages": [
+      "JavaScript",
+      "TypeScript"
+    ],
+    "projectTypes": [
+      "Node.js",
+      "React",
+      "Vite"
+    ]
+  },
+  "tools": []
+}

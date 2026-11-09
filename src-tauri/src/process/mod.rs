@@ -102,12 +102,12 @@ impl Tail {
 /// Decodes a byte stream as UTF-8 incrementally (invalid bytes are replaced),
 /// keeping incomplete multi-byte sequences for the next chunk.
 #[derive(Default)]
-struct Utf8Chunker {
+pub(crate) struct Utf8Chunker {
     pending: Vec<u8>,
 }
 
 impl Utf8Chunker {
-    fn push(&mut self, bytes: &[u8]) -> String {
+    pub(crate) fn push(&mut self, bytes: &[u8]) -> String {
         self.pending.extend_from_slice(bytes);
         let valid_up_to = match std::str::from_utf8(&self.pending) {
             Ok(_) => self.pending.len(),
@@ -119,7 +119,7 @@ impl Utf8Chunker {
         out
     }
 
-    fn finish(&mut self) -> String {
+    pub(crate) fn finish(&mut self) -> String {
         let out = String::from_utf8_lossy(&self.pending).into_owned();
         self.pending.clear();
         out
@@ -151,7 +151,7 @@ async fn pump<R: AsyncRead + Unpin>(
 }
 
 /// Kill the process and its children (npm, cargo, etc. spawn subprocesses).
-fn kill_tree(child: &mut tokio::process::Child) {
+pub(crate) fn kill_tree(child: &mut tokio::process::Child) {
     #[cfg(windows)]
     if let Some(pid) = child.id() {
         let _ = hidden_command("taskkill")

@@ -4,11 +4,12 @@
 // no access to this class. The backend still enforces boundaries, the
 // command policy, and denials independently.
 
-import type { PermissionSettings } from "@/lib/ipc/types";
+import type { PermissionLevel, PermissionSettings } from "@/lib/ipc/types";
+import { isReadOnly } from "@/mcp/classify";
 import type { ApprovalDecision, ApprovalRequest, Authorization, PermissionScope } from "../types";
 import type { AgentMode } from "./types";
 
-export type Capability = "read" | "write" | "delete" | "execute" | "install";
+export type Capability = "read" | "write" | "delete" | "execute" | "install" | "external";
 
 export interface Grant {
   id: string;
@@ -32,8 +33,12 @@ export interface AuthorizeInput {
   prompt(request: ApprovalRequest): Promise<ApprovalDecision>;
 }
 
-function levelFor(p: PermissionSettings, c: Capability) {
+function levelFor(p: PermissionSettings, c: Capability, request: ApprovalRequest): PermissionLevel {
   switch (c) {
+    case "external":
+      // MCP tools use their own policy (per tool, else the server default).
+      if (request.kind !== "mcp") return "approval";
+      return request.policy === "allow" ? "allowed" : request.policy === "deny" ? "denied" : "approval";
     case "read":
       return p.read;
     case "write":
@@ -49,6 +54,7 @@ function levelFor(p: PermissionSettings, c: Capability) {
 function matchKey(request: ApprovalRequest): string {
   if (request.kind === "command") return request.command;
   if (request.kind === "read") return request.path;
+  if (request.kind === "mcp") return `mcp:${request.server.id}:${request.tool}`;
   return "*";
 }
 
@@ -58,6 +64,7 @@ const LABEL: Record<Capability, string> = {
   delete: "delete files",
   execute: "run this command",
   install: "install dependencies",
+  external: "use this external tool",
 };
 
 export class PermissionManager {
@@ -65,14 +72,16 @@ export class PermissionManager {
 
   async authorize(input: AuthorizeInput): Promise<Authorization> {
     const { request, capability, mode, permissions, taskId, workspace } = input;
-    if (mode === "ask" && capability !== "read") {
+    const externalReadOnly = capability === "external" && request.kind === "mcp" && isReadOnly(request.permission);
+    const destructive = request.kind === "mcp" && request.destructive;
+    if (mode === "ask" && capability !== "read" && !externalReadOnly) {
       return {
         approved: false,
         prompted: false,
         reason: "Vinnie is in Ask mode (read-only), so it cannot change files or run commands. Switch to Assist or Agent mode to allow changes.",
       };
     }
-    const level = levelFor(permissions, capability);
+    const level = levelFor(permissions, capability, request);
     if (level === "denied") {
       return {
         approved: false,
@@ -80,17 +89,19 @@ export class PermissionManager {
         reason: `Your permission settings do not allow Vinnie to ${LABEL[capability]}.`,
       };
     }
-    // Deletions and secret reads always ask; Assist mode asks for everything.
-    const alwaysAsk = capability === "delete" || capability === "read" || mode === "assist";
+    // Deletions, secret reads, and destructive external actions always ask;
+    // Assist mode asks for everything.
+    const alwaysAsk = capability === "delete" || capability === "read" || destructive || mode === "assist";
     if (!alwaysAsk && level === "allowed") return { approved: true, prompted: false };
-    if (capability !== "delete" && capability !== "read" && this.findGrant(capability, matchKey(request), workspace, taskId)) {
+    const rememberable = capability !== "delete" && capability !== "read" && !destructive;
+    if (rememberable && this.findGrant(capability, matchKey(request), workspace, taskId)) {
       return { approved: true, prompted: false };
     }
 
     const decision = await input.prompt(request);
     if (!decision.approved) return { approved: false, prompted: true, reason: "The user denied this action." };
     const scope = decision.scope ?? "once";
-    if ((scope === "task" || scope === "session") && capability !== "delete" && capability !== "read") {
+    if ((scope === "task" || scope === "session") && rememberable) {
       this.grants.push({
         id: crypto.randomUUID(),
         scope,

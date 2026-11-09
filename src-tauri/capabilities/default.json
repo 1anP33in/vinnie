@@ -2,7 +2,9 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Minimal permissions for the main window. Native dialogs, URL opening, and clipboard writes run behind validated app commands, so no plugin permissions are exposed to the frontend.",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "allow-get-app-info",
     "allow-open-external-url",
@@ -51,6 +53,31 @@
     "allow-build-install-command",
     "allow-open-log-dir",
     "allow-model-details",
-    "allow-launch-ollama"
+    "allow-launch-ollama",
+    "allow-mcp-list-servers",
+    "allow-mcp-save-server",
+    "allow-mcp-delete-server",
+    "allow-mcp-mark-connected",
+    "allow-mcp-stdio-start",
+    "allow-mcp-stdio-send",
+    "allow-mcp-stdio-stop",
+    "allow-mcp-http-fetch",
+    "allow-mcp-http-abort",
+    "allow-mcp-server-logs",
+    "allow-tool-settings-list",
+    "allow-tool-settings-save",
+    "allow-tool-settings-record-run",
+    "allow-save-text-file",
+    "allow-open-text-file",
+    "allow-skills-list",
+    "allow-skills-read",
+    "allow-skills-save",
+    "allow-skills-delete",
+    "allow-skills-set-enabled",
+    "allow-skills-read-reference",
+    "allow-skills-save-reference",
+    "allow-skills-delete-reference",
+    "allow-skills-export",
+    "allow-skills-import"
   ]
 }

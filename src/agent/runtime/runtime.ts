@@ -21,7 +21,7 @@ import { TaskMemory } from "./memory";
 import type { PermissionManager } from "./permissionManager";
 import { applyPlanUpdate, classifyIntent, editPlanStep, removePlanStep, renderPlan, selectTools } from "./planner";
 import { isTransientModelError } from "./recovery";
-import { buildAgentSystemPrompt } from "./systemPrompt";
+import { buildAgentSystemPrompt, type PromptSkill } from "./systemPrompt";
 import { resolveContextBudget } from "./tokens";
 import { ToolExecutor, type ExecutionRecord } from "./toolExecutor";
 import {
@@ -84,6 +84,15 @@ export interface RunInput {
   limits: AgentLimits;
   autoVerify: boolean;
   toolsEnabled: boolean;
+  /** Skills chosen for this request (instructions already loaded). */
+  skills: RunSkill[];
+}
+
+export interface RunSkill extends PromptSkill {
+  /** Tool hints (`github.*`); they only affect which tools are offered. */
+  tools: string[];
+  reasons: string[];
+  manual: boolean;
 }
 
 class StopTask extends Error {
@@ -114,6 +123,8 @@ export class AgentRuntime {
   modelError: VinnieError | null = null;
   private budget = 8_192;
   private effectiveBudget = 8_192;
+  /** External (MCP) tools are among the tools offered in the current step. */
+  private offeredExternal = false;
 
   constructor(
     private readonly deps: RuntimeDeps,
@@ -133,6 +144,7 @@ export class AgentRuntime {
       steps: [],
       memory: [],
       changes: [],
+      skills: input.skills.map((s) => ({ id: s.id, name: s.name, reasons: s.reasons, manual: s.manual })),
       startedAt: this.now(),
       iteration: 0,
       toolCalls: 0,
@@ -208,6 +220,11 @@ export class AgentRuntime {
     const deadline = this.task.startedAt + limits.taskTimeoutMs;
     this.setStatus(this.task.intent === "task" && this.toolsOn ? "planning" : "thinking");
     this.emit("agent.started", "Task started");
+    if (this.input.skills.length > 0) {
+      this.addStep("note", `Using skills: ${this.input.skills.map((s) => s.name).join(", ")}`, "info", {
+        details: this.input.skills.map((s) => `${s.name}: ${s.reasons.join(", ")}`).join("\n"),
+      });
+    }
     this.budget = resolveContextBudget(limits.contextBudget, await this.deps.modelContextLength(this.input.model).catch(() => null));
     this.effectiveBudget = this.budget;
     this.task.usage.contextBudget = this.budget;
@@ -231,8 +248,13 @@ export class AgentRuntime {
         this.emit(planning ? "agent.planning" : "agent.thinking", planning ? "Planning" : `${this.input.model} is thinking`);
 
         const toolNames = this.toolsOn
-          ? selectTools(this.deps.registry.list(), this.input.mode, this.task.intent)
+          ? selectTools(this.deps.registry.list(), this.input.mode, this.task.intent, {
+              request: this.input.request,
+              hints: this.input.skills.flatMap((s) => s.tools),
+              skillReferences: this.input.skills.some((s) => s.references.length > 0),
+            })
           : [];
+        this.offeredExternal = toolNames.some((n) => this.deps.registry.get(n)?.source === "mcp");
         const outcome = await this.callModel(toolNames);
         this.throwIfCancelled();
 
@@ -398,6 +420,8 @@ export class AgentRuntime {
         maxToolCalls: this.input.limits.maxToolCalls,
       },
       toolsAvailable: this.toolsOn,
+      skills: this.input.skills,
+      externalTools: this.offeredExternal,
     });
   }
 
@@ -783,6 +807,8 @@ export function describeRequest(r: ApprovalRequest): string {
       return `${r.preview.kind} ${r.preview.newPath ? `${r.preview.path} → ${r.preview.newPath}` : r.preview.path}`;
     case "read":
       return `read ${r.path}`;
+    case "mcp":
+      return `use ${r.server.name} tool ${r.tool}`;
   }
 }
 

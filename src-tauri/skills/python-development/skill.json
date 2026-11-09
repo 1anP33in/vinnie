@@ -1,0 +1,31 @@
+{
+  "id": "python-development",
+  "name": "Python Development",
+  "description": "Python projects: packaging, virtual environments, typing, and pytest.",
+  "version": "1.0.0",
+  "author": "Vinnie",
+  "tags": [
+    "python"
+  ],
+  "match": {
+    "keywords": [
+      "python",
+      "pip",
+      "pytest",
+      "django",
+      "flask",
+      "fastapi",
+      "pandas",
+      "venv",
+      "requirements.txt",
+      "pyproject"
+    ],
+    "languages": [
+      "Python"
+    ],
+    "projectTypes": [
+      "Python"
+    ]
+  },
+  "tools": []
+}

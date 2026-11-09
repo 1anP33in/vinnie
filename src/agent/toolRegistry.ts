@@ -25,6 +25,18 @@ export function normalizeArguments(raw: unknown): unknown {
 
 export function createToolRegistry(): ToolRegistry {
   const tools = new Map<string, VinnieTool>();
+  const listeners = new Set<() => void>();
+  let enabledCheck: (settingsKey: string) => boolean = () => true;
+  const keyOf = (t: VinnieTool) => t.settingsKey ?? t.name;
+  const notify = () => {
+    for (const l of listeners) {
+      try {
+        l();
+      } catch {
+        /* listeners must not break registration */
+      }
+    }
+  };
 
   return {
     register(tool) {
@@ -35,17 +47,41 @@ export function createToolRegistry(): ToolRegistry {
         throw new Error(`A tool named "${tool.name}" is already registered.`);
       }
       tools.set(tool.name, tool as VinnieTool);
+      notify();
     },
-    unregister: (name) => tools.delete(name),
+    unregister: (name) => {
+      const removed = tools.delete(name);
+      if (removed) notify();
+      return removed;
+    },
     get: (name) => tools.get(name),
     list: (): ToolDefinition[] =>
-      [...tools.values()].map(({ name, description, inputSchema, category, riskLevel }) => ({
-        name,
-        description,
-        inputSchema,
-        category,
-        riskLevel,
+      [...tools.values()].map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema,
+        category: t.category,
+        riskLevel: t.riskLevel,
+        source: t.source ?? "native",
+        settingsKey: keyOf(t),
+        displayName: t.displayName ?? t.name,
+        serverId: t.serverId,
+        permission: t.permission,
+        enabled: enabledCheck(keyOf(t)),
+        available: t.available ? t.available() : true,
       })),
+    setEnabledCheck(check) {
+      enabledCheck = check;
+      notify();
+    },
+    isEnabled: (name) => {
+      const tool = tools.get(name);
+      return !!tool && enabledCheck(keyOf(tool));
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
     specs: (names) =>
       [...tools.values()]
         .filter((t) => !names || names.includes(t.name))
@@ -70,6 +106,17 @@ export function createToolRegistry(): ToolRegistry {
       if (!parsed.success) {
         const issues = parsed.error.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; ");
         return toolFailure("INVALID_ARGUMENT", `Invalid input for ${name}: ${issues}. Nothing was executed.`);
+      }
+      if (!enabledCheck(keyOf(tool))) {
+        return toolFailure("PERMISSION_DENIED", `The ${tool.displayName ?? name} tool is disabled in Tools settings, so it was not executed.`, {
+          outcome: "denied",
+          details: "Do not call it again; use a different approach or ask the user to enable it.",
+        });
+      }
+      if (tool.available && !tool.available()) {
+        return toolFailure("NETWORK_FAILURE", `${tool.displayName ?? name} is unavailable because its server is not connected. Nothing was executed.`, {
+          details: "Continue without it, or tell the user to reconnect the server in the MCP manager.",
+        });
       }
       if (context.signal.aborted) {
         return toolFailure("CANCELLED", "The task was stopped before this tool ran.", { outcome: "cancelled" });

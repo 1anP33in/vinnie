@@ -14,6 +14,10 @@
 //! - `deps`       — package-manager detection and install commands
 //! - `analyzer`   — lightweight project analysis
 //! - `git`        — read-only Git status
+//! - `mcp`        — MCP server configs, secrets (Credential Manager), and the
+//!   stdio/HTTP transport relays for the frontend's MCP SDK client
+//! - `skills`     — installed skills (folders of instructions and references)
+//! - `tool_settings` — per-tool enable switches, policies, and usage counters
 
 mod analyzer;
 mod changes;
@@ -23,12 +27,15 @@ mod deps;
 mod error;
 mod generation;
 mod git;
+mod mcp;
 mod ollama;
 mod permissions;
 mod process;
 mod project;
 mod settings;
+mod skills;
 mod state;
+mod tool_settings;
 mod workspace;
 
 use tauri::Manager;
@@ -48,12 +55,21 @@ fn init_state(app: &tauri::AppHandle) -> Result<AppState, AppError> {
     let db = Database::open(&database)?;
     log::info!("database opened at {}", database.display());
 
+    let skills_dir = data_dir.join("skills");
+    match skills::install_builtins(&*db.conn()?, &skills_dir) {
+        Ok(n) if n > 0 => log::info!("installed {n} built-in skill(s)"),
+        Ok(_) => {}
+        Err(e) => log::warn!("could not install built-in skills: {e}"),
+    }
+
     Ok(AppState {
         db,
         http: ollama::build_http_client()?,
         generations: Default::default(),
         searches: Default::default(),
         processes: Default::default(),
+        mcp: mcp::McpState::new(mcp::secrets::default_store())?,
+        skills: skills::SkillStore::new(skills_dir),
         paths: AppPaths {
             data_dir,
             database,
@@ -138,7 +154,40 @@ pub fn run() {
             commands::app::open_log_dir,
             commands::chat::model_details,
             commands::chat::launch_ollama,
+            commands::mcp::mcp_list_servers,
+            commands::mcp::mcp_save_server,
+            commands::mcp::mcp_delete_server,
+            commands::mcp::mcp_mark_connected,
+            commands::mcp::mcp_stdio_start,
+            commands::mcp::mcp_stdio_send,
+            commands::mcp::mcp_stdio_stop,
+            commands::mcp::mcp_http_fetch,
+            commands::mcp::mcp_http_abort,
+            commands::mcp::mcp_server_logs,
+            commands::tools::tool_settings_list,
+            commands::tools::tool_settings_save,
+            commands::tools::tool_settings_record_run,
+            commands::tools::save_text_file,
+            commands::tools::open_text_file,
+            commands::skills::skills_list,
+            commands::skills::skills_read,
+            commands::skills::skills_save,
+            commands::skills::skills_delete,
+            commands::skills::skills_set_enabled,
+            commands::skills::skills_read_reference,
+            commands::skills::skills_save_reference,
+            commands::skills::skills_delete_reference,
+            commands::skills::skills_export,
+            commands::skills::skills_import,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Vinnie");
+        .build(tauri::generate_context!())
+        .expect("error while building Vinnie")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Stop MCP servers (the job object also kills them if we crash).
+                if let Some(state) = app.try_state::<AppState>() {
+                    state.mcp.stdio.stop_all();
+                }
+            }
+        });
 }

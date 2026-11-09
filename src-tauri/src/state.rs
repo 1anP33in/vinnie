@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use crate::db::Database;
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::generation::GenerationRegistry;
+use crate::mcp::McpState;
 use crate::settings::{self, Settings};
+use crate::skills::SkillStore;
 use crate::workspace::ignore_rules::IgnoreRules;
 use crate::workspace::Workspace;
 
@@ -24,6 +26,9 @@ pub struct AppState {
     pub searches: GenerationRegistry,
     /// Running terminal commands.
     pub processes: GenerationRegistry,
+    /// MCP servers: processes, HTTP relays, logs, and the secret store.
+    pub mcp: McpState,
+    pub skills: SkillStore,
     pub paths: AppPaths,
 }
 

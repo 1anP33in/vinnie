@@ -46,7 +46,20 @@ describe("tool registry", () => {
     expect(registry.list()).toEqual([]);
     registry.register(echo);
     expect(registry.list()).toEqual([
-      { name: "echo", description: "Echo text", inputSchema: echo.inputSchema, category: "READ", riskLevel: "safe" },
+      {
+        name: "echo",
+        description: "Echo text",
+        inputSchema: echo.inputSchema,
+        category: "READ",
+        riskLevel: "safe",
+        source: "native",
+        settingsKey: "echo",
+        displayName: "echo",
+        serverId: undefined,
+        permission: undefined,
+        enabled: true,
+        available: true,
+      },
     ]);
     expect(() => registry.register(echo)).toThrow(/already registered/);
     expect(() => registry.register({ ...echo, name: "Bad Name!" })).toThrow(/Invalid tool name/);

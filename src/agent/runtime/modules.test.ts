@@ -136,7 +136,10 @@ describe("planner", () => {
 
   it("selects tools by mode and intent", () => {
     const defs = (["READ", "SEARCH", "WRITE", "DELETE", "EXECUTE", "DEPENDENCY", "PROJECT"] as const).map(
-      (category, i): ToolDefinition => ({ name: `t${i}_${category.toLowerCase()}`, description: "", inputSchema: {}, category, riskLevel: "safe" }),
+      (category, i): ToolDefinition => {
+        const name = `t${i}_${category.toLowerCase()}`;
+        return { name, description: "", inputSchema: {}, category, riskLevel: "safe", source: "native", settingsKey: name, displayName: name, enabled: true, available: true };
+      },
     );
     expect(selectTools(defs, "ask", "task")).toEqual(["t0_read", "t1_search", "t6_project"]);
     expect(selectTools(defs, "agent", "question")).toEqual(["t0_read", "t1_search", "t4_execute", "t6_project"]);
