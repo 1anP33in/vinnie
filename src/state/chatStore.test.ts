@@ -5,8 +5,10 @@ import type { ToolCall } from "@/lib/ipc/types";
 import { getServices } from "@/services";
 import { installFakes, resetStores } from "@/test/fakes";
 import { useActivityStore } from "./activityStore";
+import { bridgeAgentEventsToActivity } from "./agentActivityBridge";
 import { useApprovalStore } from "./approvalStore";
-import { buildHistory, MAX_TOOL_ROUNDS, useChatStore } from "./chatStore";
+import { buildHistory, useChatStore } from "./chatStore";
+import { useSettingsStore } from "./settingsStore";
 import { useConnectionStore } from "./connectionStore";
 import { toUiMessage, useConversationStore } from "./conversationStore";
 import { useProjectStore } from "./projectStore";
@@ -244,6 +246,7 @@ describe("buildHistory", () => {
 
 describe("tool use", () => {
   beforeEach(() => {
+    bridgeAgentEventsToActivity();
     registerWorkspaceTools(getServices().tools);
     useProjectStore.setState({ project: { path: "C:\\Projects\\demo", name: "demo", status: "available" } });
     fakes.ws.files.set("client/main.lua", "RegisterCommand('duty', function() end)\n");
@@ -272,7 +275,9 @@ describe("tool use", () => {
     second.complete();
     await waitForGenerationEnd();
 
-    expect(fakes.conversations.messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant"]);
+    // The app (not the model) appends a task report because tools ran.
+    expect(fakes.conversations.messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant", "assistant"]);
+    expect(fakes.conversations.messages.at(-1)).toMatchObject({ model: null, content: expect.stringContaining("Task report") });
     expect(fakes.conversations.messages[1]?.toolCalls?.[0]?.function.name).toBe("search_files");
     expect(fakes.conversations.messages[2]?.toolName).toBe("search_files");
     expect(useActivityStore.getState().activities.some((a) => a.title.startsWith('Searching project for "RegisterCommand"'))).toBe(true);
@@ -299,17 +304,20 @@ describe("tool use", () => {
     expect(fakes.provider.lastStream().messages[0]?.content).toContain("No project folder is selected");
   });
 
-  it("stops at the tool-round limit", async () => {
-    await chat().send("loop forever");
-    for (let i = 0; i <= MAX_TOOL_ROUNDS; i++) {
-      await waitFor(() => expect(fakes.provider.streams).toHaveLength(i + 1));
-      const s = fakes.provider.lastStream();
-      s.callTool("get_project_structure", {});
+  it("stops at the iteration limit and reports it honestly", async () => {
+    const settings = useSettingsStore.getState().settings;
+    useSettingsStore.setState({ settings: { ...settings, agent: { ...settings.agent, maxIterations: 3 } } });
+    await chat().send("Look at the project structure again and again");
+    for (let i = 0; i < 3; i++) {
+      const s = await stream(i + 1);
+      s.callTool("get_project_structure", { depth: i + 1 });
       s.complete();
     }
     await waitForGenerationEnd();
-    expect(fakes.provider.streams).toHaveLength(MAX_TOOL_ROUNDS + 1);
-    expect(chat().error?.error.message).toMatch(/Stopped after/);
+    expect(fakes.provider.streams).toHaveLength(3);
+    const report = fakes.conversations.messages.at(-1)!;
+    expect(report.content).toContain("Task report");
+    expect(report.content).toMatch(/iteration limit/i);
   });
 
   it("stopping denies pending approvals", async () => {

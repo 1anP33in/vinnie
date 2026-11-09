@@ -1,9 +1,11 @@
-import { ArrowUp, Square } from "lucide-react";
+import { ArrowUp, Pause, Play, Square } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useAgentStore } from "@/state/agentStore";
 import { useChatStore } from "@/state/chatStore";
 import { useConnectionStore } from "@/state/connectionStore";
 import { useConversationStore } from "@/state/conversationStore";
 import { useUiStore } from "@/state/uiStore";
+import { SkillPicker } from "./SkillPicker";
 
 const MAX_HEIGHT_PX = 240;
 
@@ -15,6 +17,8 @@ export function Composer() {
   const generation = useChatStore((s) => s.generation);
   const send = useChatStore((s) => s.send);
   const stop = useChatStore((s) => s.stop);
+  const pauseAgent = useAgentStore((s) => s.pause);
+  const resumeAgent = useAgentStore((s) => s.resume);
   const selectedModel = useConnectionStore((s) => s.selectedModel);
   const activeId = useConversationStore((s) => s.activeId);
   const draft = useUiStore((s) => s.composerDraft);
@@ -95,6 +99,18 @@ export function Composer() {
             rows={1}
             className="max-h-60 min-h-[36px] flex-1 resize-none bg-transparent px-2 py-2 leading-relaxed text-text outline-none placeholder:text-faint focus-visible:outline-none"
           />
+          <SkillPicker />
+          {busy && generation?.taskId && generation.phase !== "stopping" && (
+            <button
+              type="button"
+              onClick={generation.phase === "paused" ? resumeAgent : pauseAgent}
+              aria-label={generation.phase === "paused" ? "Resume task" : "Pause task"}
+              title={generation.phase === "paused" ? "Resume task" : "Pause task"}
+              className="inline-flex size-9 items-center justify-center rounded-lg border border-border-strong bg-surface-2 text-text hover:bg-surface-3"
+            >
+              {generation.phase === "paused" ? <Play size={14} /> : <Pause size={14} />}
+            </button>
+          )}
           {busy ? (
             <button
               type="button"

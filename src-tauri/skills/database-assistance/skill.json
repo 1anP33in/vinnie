@@ -1,0 +1,39 @@
+{
+  "id": "database-assistance",
+  "name": "Database Assistance",
+  "description": "SQL and databases: schemas, queries, migrations, and safe data changes.",
+  "version": "1.0.0",
+  "author": "Vinnie",
+  "tags": [
+    "database",
+    "sql"
+  ],
+  "match": {
+    "keywords": [
+      "database",
+      "sql",
+      "mysql",
+      "mariadb",
+      "postgres",
+      "postgresql",
+      "sqlite",
+      "query",
+      "schema",
+      "migration",
+      "table",
+      "oxmysql",
+      "orm",
+      "prisma"
+    ],
+    "languages": [
+      "SQL"
+    ],
+    "projectTypes": []
+  },
+  "tools": [
+    "database.*",
+    "postgres.*",
+    "sqlite.*",
+    "mysql.*"
+  ]
+}

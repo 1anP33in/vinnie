@@ -1,0 +1,32 @@
+{
+  "id": "csharp-development",
+  "name": "C# Development",
+  "description": "C# and .NET: projects and solutions, async code, nullable references, and testing.",
+  "version": "1.0.0",
+  "author": "Vinnie",
+  "tags": [
+    "csharp",
+    "dotnet"
+  ],
+  "match": {
+    "keywords": [
+      "c#",
+      "csharp",
+      ".net",
+      "dotnet",
+      "asp.net",
+      "unity",
+      "nuget",
+      "csproj",
+      "wpf",
+      "blazor"
+    ],
+    "languages": [
+      "C#"
+    ],
+    "projectTypes": [
+      ".NET"
+    ]
+  },
+  "tools": []
+}

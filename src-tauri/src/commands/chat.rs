@@ -3,8 +3,10 @@ use tauri::ipc::Channel;
 use tauri::State;
 
 use crate::error::{AppError, AppResult};
+use crate::ollama::launcher::{self, LaunchResult};
 use crate::ollama::types::{
-    ChatMessage, ConnectionInfo, GenerationOutcome, ModelInfo, StreamEvent,
+    ChatMessage, ChatOptions, ConnectionInfo, GenerationOutcome, ModelDetails, ModelInfo,
+    StreamEvent,
 };
 use crate::ollama::{OllamaClient, StreamTimeouts};
 use crate::settings::{self, validate_model_name};
@@ -56,6 +58,9 @@ pub struct ChatStreamRequest {
     /// Tool definitions offered to the model (Ollama/OpenAI function format).
     #[serde(default)]
     pub tools: Vec<serde_json::Value>,
+    /// Context window to request (tokens).
+    #[serde(default)]
+    pub num_ctx: Option<u32>,
 }
 
 impl ChatStreamRequest {
@@ -107,6 +112,11 @@ impl ChatStreamRequest {
                 "The last message must come from the user or a tool.",
             ));
         }
+        if self.num_ctx.is_some_and(|n| !(512..=131_072).contains(&n)) {
+            return Err(AppError::validation(
+                "The context size must be between 512 and 131072 tokens.",
+            ));
+        }
         if self.tools.len() > MAX_TOOLS {
             return Err(AppError::validation("Too many tools."));
         }
@@ -146,6 +156,9 @@ pub async fn chat_stream(
             &model,
             &request.messages,
             &request.tools,
+            ChatOptions {
+                num_ctx: request.num_ctx,
+            },
             guard.token(),
             StreamTimeouts::default(),
             |event| {
@@ -174,6 +187,40 @@ pub async fn chat_stream(
     result
 }
 
+/// Context length and capabilities for a model.
+#[tauri::command]
+pub async fn model_details(state: State<'_, AppState>, model: String) -> AppResult<ModelDetails> {
+    let model = validate_model_name(&model)?;
+    client_for(&state, None)?.model_details(&model).await
+}
+
+/// Start `ollama serve` locally when the endpoint is on this computer and
+/// nothing is answering there yet.
+#[tauri::command]
+pub async fn launch_ollama(state: State<'_, AppState>) -> AppResult<LaunchResult> {
+    let endpoint = settings::load(&*state.db.conn()?)?.ollama_endpoint;
+    let bind = launcher::local_bind_address(&endpoint)?;
+    let client = OllamaClient::new(state.http.clone(), &endpoint)?;
+    if client.check_connection().await.is_ok() {
+        return Ok(LaunchResult {
+            status: "alreadyRunning".into(),
+            executable: None,
+        });
+    }
+    let local_app_data = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from);
+    let exe = launcher::locate(local_app_data.as_deref()).ok_or_else(|| {
+        AppError::not_found(
+            "Ollama is not installed (ollama.exe was not found). Download it from https://ollama.com/download, then try again.",
+        )
+    })?;
+    launcher::spawn_serve(&exe, &bind)?;
+    log::info!("started ollama serve from {} on {bind}", exe.display());
+    Ok(LaunchResult {
+        status: "started".into(),
+        executable: Some(exe.display().to_string()),
+    })
+}
+
 /// Ask a running generation to stop. Returns `false` if it already ended.
 #[tauri::command]
 pub fn cancel_generation(state: State<'_, AppState>, request_id: String) -> bool {
@@ -200,6 +247,7 @@ mod tests {
                 })
                 .collect(),
             tools: vec![],
+            num_ctx: None,
         }
     }
 
@@ -237,6 +285,9 @@ mod tests {
         let mut not_object = req(vec![("user", "hi")]);
         not_object.tools = vec![serde_json::json!("rm -rf")];
         assert!(not_object.validate().is_err());
+        let mut huge_ctx = req(vec![("user", "hi")]);
+        huge_ctx.num_ctx = Some(10_000_000);
+        assert!(huge_ctx.validate().is_err());
         assert!(req(vec![("user", "hi"), ("assistant", "yo")])
             .validate()
             .is_err());

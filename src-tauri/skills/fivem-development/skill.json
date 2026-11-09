@@ -1,0 +1,36 @@
+{
+  "id": "fivem-development",
+  "name": "FiveM Development",
+  "description": "Build and debug FiveM resources: fxmanifest, client/server Lua, events, NUI, and natives.",
+  "version": "1.0.0",
+  "author": "Vinnie",
+  "tags": [
+    "fivem",
+    "lua",
+    "nui",
+    "gta"
+  ],
+  "match": {
+    "keywords": [
+      "fivem",
+      "fxmanifest",
+      "resource",
+      "natives",
+      "nui",
+      "esx",
+      "qbcore",
+      "qb-core",
+      "ox_lib",
+      "cfx",
+      "txadmin",
+      "server.cfg"
+    ],
+    "languages": [
+      "Lua"
+    ],
+    "projectTypes": [
+      "FiveM"
+    ]
+  },
+  "tools": []
+}

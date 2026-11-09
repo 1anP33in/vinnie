@@ -9,12 +9,19 @@ export function createOllamaProvider(): AIProvider {
     displayName: "Ollama",
     checkConnection: (endpoint) => commands.checkConnection(endpoint),
     listModels: (endpoint) => commands.listModels(endpoint),
+    modelDetails: (model) => commands.modelDetails(model),
     streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): GenerationHandle {
       const requestId = newRequestId();
       let settled = false;
       const result = commands
         .chatStream(
-          { requestId, model: request.model, messages: request.messages, tools: request.tools ?? [] },
+          {
+            requestId,
+            model: request.model,
+            messages: request.messages,
+            tools: request.tools ?? [],
+            numCtx: request.numCtx ?? null,
+          },
           onEvent,
         )
         .finally(() => {

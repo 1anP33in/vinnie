@@ -37,7 +37,13 @@ import {
   type WorkspaceService,
 } from "@/services";
 import { DEFAULT_SETTINGS } from "@/settings/validation";
+import { permissionManager } from "@/agent/runtime/permissionManager";
+import { resetMcpManager } from "@/state/mcpStore";
+import { clearSkillCache, useSkillStore } from "@/state/skillStore";
+import { useToolSettingsStore } from "@/state/toolSettingsStore";
 import { useActivityStore } from "@/state/activityStore";
+import { createFakeDialogs, createFakeMcpService, createFakeSkills, createFakeToolSettings } from "./integrationFakes";
+import { useAgentStore } from "@/state/agentStore";
 import { useApprovalStore } from "@/state/approvalStore";
 import { useChangesStore } from "@/state/changesStore";
 import { useChatStore } from "@/state/chatStore";
@@ -66,12 +72,18 @@ const initialStates = [
   [useSearchStore, useSearchStore.getState()],
   [useTerminalStore, useTerminalStore.getState()],
   [useWorkspaceStore, useWorkspaceStore.getState()],
+  [useAgentStore, useAgentStore.getState()],
+  [useSkillStore, useSkillStore.getState()],
+  [useToolSettingsStore, useToolSettingsStore.getState()],
 ] as const;
 
 export function resetStores() {
   for (const [store, state] of initialStates) {
     (store as { setState(s: unknown, replace: true): void }).setState(state, true);
   }
+  permissionManager.clearSession();
+  resetMcpManager();
+  clearSkillCache();
 }
 
 /** A scripted generation that tests drive step by step. */
@@ -128,6 +140,8 @@ export class FakeStream {
 
 export interface FakeProvider extends AIProvider {
   streams: FakeStream[];
+  /** Context length reported by modelDetails (null = unknown). */
+  contextLength: number | null;
   models: ModelInfo[];
   connectionError: VinnieError | null;
   lastStream(): FakeStream;
@@ -143,7 +157,11 @@ export function createFakeProvider(models: ModelInfo[] = [model("qwen3:8b")]): F
     displayName: "Fake",
     streams: [],
     models,
+    contextLength: null,
     connectionError: null,
+    async modelDetails(name) {
+      return { name, contextLength: provider.contextLength, capabilities: ["completion", "tools"] };
+    },
     async checkConnection(endpoint) {
       if (provider.connectionError) throw provider.connectionError;
       return { endpoint: endpoint ?? "http://localhost:11434", version: "0.0.0-test" };
@@ -553,6 +571,10 @@ export function installFakes(overrides: Partial<Services> = {}) {
   const ws = createFakeWorkspace({ "README.md": "# Demo\n" });
   const process = createFakeProcess();
   const analysis = createFakeAnalysis();
+  const mcp = createFakeMcpService();
+  const toolSettings = createFakeToolSettings();
+  const skills = createFakeSkills();
+  const dialogs = createFakeDialogs();
   let stored: Settings = { ...DEFAULT_SETTINGS };
   const settings = {
     load: async () => stored,
@@ -584,6 +606,7 @@ export function installFakes(overrides: Partial<Services> = {}) {
       opened.push(url);
     },
     openLogDir: async () => {},
+    launchOllama: async () => ({ status: "started" as const, executable: "C:\\Ollama\\ollama.exe" }),
   };
   setServices({
     provider,
@@ -597,6 +620,10 @@ export function installFakes(overrides: Partial<Services> = {}) {
     changes: ws.changeService,
     process: process.service,
     analysis: analysis.service,
+    mcp: mcp.service,
+    toolSettings: toolSettings.service,
+    skills: skills.service,
+    dialogs: dialogs.service,
     ...overrides,
   });
   return {
@@ -604,11 +631,16 @@ export function installFakes(overrides: Partial<Services> = {}) {
     conversations,
     project,
     settings,
+    system,
     opened,
     copied,
     ws,
     process,
     analysis,
+    mcp,
+    toolSettings,
+    skills,
+    dialogs,
     getStoredSettings: () => stored,
   };
 }

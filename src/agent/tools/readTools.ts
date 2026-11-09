@@ -2,7 +2,8 @@
 
 import { z } from "zod";
 import { toVinnieError } from "@/lib/errors";
-import type { ToolContext, ToolResult, VinnieTool } from "../types";
+import type { FileContent } from "@/lib/ipc/types";
+import { toolFailure, toolSuccess, type ToolContext, type ToolResult, type VinnieTool } from "../types";
 
 const assistant = (approved = false) => ({ actor: "assistant" as const, approved });
 
@@ -27,7 +28,8 @@ export const getProjectStructure: VinnieTool<z.infer<typeof structureSchema>> = 
     },
   },
   schema: structureSchema,
-  capability: "read",
+  category: "READ",
+  riskLevel: "safe",
   activityKind: "read",
   describe: (i) => `Reading project structure${i.path ? ` of ${i.path}` : ""}`,
   async execute(input, ctx) {
@@ -38,10 +40,9 @@ export const getProjectStructure: VinnieTool<z.infer<typeof structureSchema>> = 
       access: assistant(),
     });
     const header = input.path ? `${input.path}/` : "(project root)";
-    return {
-      ok: true,
-      content: `${header}\n${tree.text}${tree.truncated ? "… (listing truncated)\n" : ""}`,
-    };
+    return toolSuccess(`${header}\n${tree.text}${tree.truncated ? "… (listing truncated)\n" : ""}`, {
+      output: tree,
+    });
   },
 };
 
@@ -67,17 +68,14 @@ export const searchFiles: VinnieTool<z.infer<typeof searchSchema>> = {
       mode: { type: "string", enum: ["text", "filename"] },
       caseSensitive: { type: "boolean" },
       regex: { type: "boolean" },
-      include: {
-        type: "array",
-        items: { type: "string" },
-        description: "File filters such as ['lua'] or ['*.ts'].",
-      },
+      include: { type: "array", items: { type: "string" }, description: "File filters such as ['lua'] or ['*.ts']." },
       maxResults: { type: "integer", description: "Default 50." },
     },
     required: ["query"],
   },
   schema: searchSchema,
-  capability: "read",
+  category: "SEARCH",
+  riskLevel: "safe",
   activityKind: "search",
   describe: (i) => `Searching project for "${i.query}"`,
   async execute(input, ctx) {
@@ -87,19 +85,19 @@ export const searchFiles: VinnieTool<z.infer<typeof searchSchema>> = {
       assistant(),
     );
     if (results.matches.length === 0) {
-      return { ok: true, content: `No matches for "${input.query}" (${results.filesSearched} files searched).` };
+      return toolSuccess(`No matches for "${input.query}" (${results.filesSearched} files searched).`, { output: results });
     }
     const lines = results.matches.map((m) => (m.line > 0 ? `${m.path}:${m.line}: ${m.preview}` : m.path));
     const notes = [
       results.truncated ? "More results exist; refine the query to see them." : null,
       results.timedOut ? "The search stopped early because it took too long." : null,
     ].filter(Boolean);
-    return {
-      ok: true,
-      content: `${results.matches.length} result(s) in ${results.filesSearched} files:\n${lines.join("\n")}${
+    return toolSuccess(
+      `${results.matches.length} result(s) in ${results.filesSearched} files:\n${lines.join("\n")}${
         notes.length ? `\n${notes.join(" ")}` : ""
       }`,
-    };
+      { output: results },
+    );
   },
 };
 
@@ -111,21 +109,18 @@ const readSchema = z.object({
   endLine: z.number().int().min(1).optional(),
 });
 
-export async function readWithApproval(
-  path: string,
-  ctx: ToolContext,
-  reason: string | null,
-): Promise<{ ok: true; content: string | null; binary: boolean; tooLarge: boolean } | ToolResult> {
+/** Read a file as the assistant, asking the user first for likely-secret files. */
+export async function readWithApproval(path: string, ctx: ToolContext, reason: string | null): Promise<FileContent | ToolResult> {
   try {
-    const file = await ctx.services.workspace.readFile(path, assistant());
-    return { ok: true, content: file.content, binary: file.binary, tooLarge: file.tooLarge };
+    return await ctx.services.workspace.readFile(path, assistant());
   } catch (err) {
     const e = toVinnieError(err);
     if (e.kind !== "approval_required") throw e;
-    const decision = await ctx.requestApproval({ kind: "read", path, reason, workspace: ctx.workspaceRoot });
-    if (!decision.approved) return { ok: false, kind: "denied", error: `The user did not allow reading ${path}.` };
-    const file = await ctx.services.workspace.readFile(path, assistant(true));
-    return { ok: true, content: file.content, binary: file.binary, tooLarge: file.tooLarge };
+    const auth = await ctx.authorize({ kind: "read", path, reason, workspace: ctx.workspaceRoot }, "read");
+    if (!auth.approved) {
+      return toolFailure("PERMISSION_DENIED", `The user did not allow reading ${path}.`, { outcome: "denied" });
+    }
+    return ctx.services.workspace.readFile(path, assistant(true));
   }
 }
 
@@ -142,18 +137,18 @@ export const readFile: VinnieTool<z.infer<typeof readSchema>> = {
     required: ["path"],
   },
   schema: readSchema,
-  capability: "read",
+  category: "READ",
+  riskLevel: "safe",
   activityKind: "read",
   describe: (i) => `Reading ${i.path}`,
   async execute(input, ctx) {
-    const result = await readWithApproval(input.path, ctx, null);
-    if (!result.ok) return result;
-    if (!("binary" in result)) return result;
-    if (result.binary) return { ok: false, error: `${input.path} is a binary file and cannot be read as text.` };
-    if (result.tooLarge || result.content == null) {
-      return { ok: false, error: `${input.path} is too large to read (over 2 MB).` };
+    const file = await readWithApproval(input.path, ctx, null);
+    if ("outcome" in file) return file;
+    if (file.binary) return toolFailure("INVALID_ARGUMENT", `${input.path} is a binary file and cannot be read as text.`);
+    if (file.tooLarge || file.content == null) {
+      return toolFailure("INVALID_ARGUMENT", `${input.path} is too large to read (over 2 MB).`);
     }
-    const lines = result.content.split(/\r?\n/);
+    const lines = file.content.split(/\r?\n/);
     const start = Math.min(input.startLine ?? 1, Math.max(lines.length, 1));
     const end = Math.min(input.endLine ?? start + MAX_READ_LINES - 1, start + MAX_READ_LINES - 1, lines.length);
     const width = String(end).length;
@@ -162,6 +157,8 @@ export const readFile: VinnieTool<z.infer<typeof readSchema>> = {
       .map((line, i) => `${String(start + i).padStart(width)}| ${line}`)
       .join("\n");
     const more = end < lines.length ? `\n… ${lines.length - end} more lines (read with startLine=${end + 1}).` : "";
-    return { ok: true, content: `${input.path} (lines ${start}-${end} of ${lines.length})\n${body}${more}` };
+    return toolSuccess(`${input.path} (lines ${start}-${end} of ${lines.length})\n${body}${more}`, {
+      output: { path: input.path, totalLines: lines.length, startLine: start, endLine: end },
+    });
   },
 };

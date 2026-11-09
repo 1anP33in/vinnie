@@ -57,6 +57,83 @@ pub struct Settings {
     pub tools_enabled: bool,
     /// Attach a project summary and the active file to chat requests.
     pub project_context_enabled: bool,
+    /// Agent runtime behavior and limits.
+    pub agent: AgentSettings,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentMode {
+    /// Read-only: inspect and explain, never modify.
+    Ask,
+    /// Propose every change; the user approves each one.
+    Assist,
+    /// Act autonomously within the permission settings.
+    #[default]
+    Agent,
+}
+
+/// Context window to request from the model. `0` means automatic.
+pub const CONTEXT_BUDGETS: &[u32] = &[0, 4096, 8192, 16384, 32768];
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentSettings {
+    pub mode: AgentMode,
+    pub max_iterations: u32,
+    pub max_tool_calls: u32,
+    pub max_retries: u32,
+    pub command_timeout_secs: u32,
+    pub task_timeout_mins: u32,
+    pub max_changed_files: u32,
+    /// Tokens; 0 = automatic (based on the model's context length).
+    pub context_budget: u32,
+    pub auto_verify: bool,
+    /// Show the developer task debug view.
+    pub debug_view: bool,
+}
+
+impl Default for AgentSettings {
+    fn default() -> Self {
+        Self {
+            mode: AgentMode::Agent,
+            max_iterations: 25,
+            max_tool_calls: 60,
+            max_retries: 2,
+            command_timeout_secs: 600,
+            task_timeout_mins: 30,
+            max_changed_files: 20,
+            context_budget: 0,
+            auto_verify: true,
+            debug_view: false,
+        }
+    }
+}
+
+impl AgentSettings {
+    pub fn validated(&self) -> AppResult<AgentSettings> {
+        let range = |name: &str, v: u32, min: u32, max: u32| {
+            if (min..=max).contains(&v) {
+                Ok(v)
+            } else {
+                Err(AppError::validation(format!(
+                    "{name} must be between {min} and {max}."
+                )))
+            }
+        };
+        range("Maximum iterations", self.max_iterations, 1, 200)?;
+        range("Maximum tool calls", self.max_tool_calls, 1, 500)?;
+        range("Maximum retries", self.max_retries, 0, 10)?;
+        range("Command timeout", self.command_timeout_secs, 5, 3600)?;
+        range("Task timeout", self.task_timeout_mins, 1, 240)?;
+        range("Maximum changed files", self.max_changed_files, 1, 500)?;
+        if !CONTEXT_BUDGETS.contains(&self.context_budget) {
+            return Err(AppError::validation(
+                "Context budget must be Auto, 4096, 8192, 16384, or 32768.",
+            ));
+        }
+        Ok(self.clone())
+    }
 }
 
 impl Default for Settings {
@@ -76,6 +153,7 @@ impl Default for Settings {
                 .collect(),
             tools_enabled: true,
             project_context_enabled: true,
+            agent: AgentSettings::default(),
         }
     }
 }
@@ -166,6 +244,7 @@ impl Settings {
         }
         Ok(Settings {
             ignored_directories,
+            agent: self.agent.validated()?,
             ollama_endpoint: normalize_endpoint(&self.ollama_endpoint)?,
             default_model,
             ..self.clone()
@@ -248,6 +327,37 @@ mod tests {
     }
 
     #[test]
+    fn agent_defaults_and_validation() {
+        let d = AgentSettings::default();
+        assert_eq!(d.mode, AgentMode::Agent);
+        assert_eq!((d.max_iterations, d.max_retries), (25, 2));
+        assert!(d.auto_verify);
+        for bad in [
+            AgentSettings {
+                max_iterations: 0,
+                ..d.clone()
+            },
+            AgentSettings {
+                max_retries: 50,
+                ..d.clone()
+            },
+            AgentSettings {
+                context_budget: 5000,
+                ..d.clone()
+            },
+            AgentSettings {
+                command_timeout_secs: 1,
+                ..d.clone()
+            },
+        ] {
+            assert!(bad.validated().is_err(), "{bad:?}");
+        }
+        // Older stored settings without an `agent` section get defaults.
+        let parsed: Settings = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
+        assert_eq!(parsed.agent, AgentSettings::default());
+    }
+
+    #[test]
     fn rejects_invalid_ignored_directories() {
         for bad in ["../x", "a/b", "C:", "*"] {
             let s = Settings {
@@ -297,8 +407,14 @@ mod tests {
             ],
             tools_enabled: false,
             project_context_enabled: true,
+            agent: AgentSettings {
+                mode: AgentMode::Assist,
+                context_budget: 8192,
+                ..AgentSettings::default()
+            },
         };
         let saved = save(&conn, &settings).unwrap();
+        assert_eq!(saved.agent.mode, AgentMode::Assist);
         assert_eq!(saved.ollama_endpoint, "http://127.0.0.1:11434");
         assert_eq!(saved.default_model, None);
         assert_eq!(saved.ignored_directories, vec!["node_modules", "vendor"]);

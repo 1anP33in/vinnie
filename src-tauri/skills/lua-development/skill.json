@@ -1,0 +1,23 @@
+{
+  "id": "lua-development",
+  "name": "Lua Development",
+  "description": "Idiomatic, safe Lua 5.4: tables, modules, error handling, and performance.",
+  "version": "1.0.0",
+  "author": "Vinnie",
+  "tags": [
+    "lua"
+  ],
+  "match": {
+    "keywords": [
+      "lua",
+      "luau",
+      "metatable",
+      "coroutine"
+    ],
+    "languages": [
+      "Lua"
+    ],
+    "projectTypes": []
+  },
+  "tools": []
+}

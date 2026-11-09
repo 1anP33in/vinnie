@@ -1,0 +1,28 @@
+{
+  "id": "documentation",
+  "name": "Documentation",
+  "description": "Clear READMEs, guides, comments, and changelogs that match the code.",
+  "version": "1.0.0",
+  "author": "Vinnie",
+  "tags": [
+    "documentation",
+    "docs",
+    "readme"
+  ],
+  "match": {
+    "keywords": [
+      "readme",
+      "documentation",
+      "docs",
+      "document",
+      "changelog",
+      "guide",
+      "comments",
+      "docstring",
+      "explain the code"
+    ],
+    "languages": [],
+    "projectTypes": []
+  },
+  "tools": []
+}

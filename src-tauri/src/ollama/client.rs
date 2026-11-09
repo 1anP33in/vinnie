@@ -7,8 +7,9 @@ use tokio_util::sync::CancellationToken;
 
 use super::stream::NdjsonDecoder;
 use super::types::{
-    ChatChunk, ChatMessage, ChatRequestBody, ConnectionInfo, GenerationOutcome, GenerationStats,
-    GenerationStatus, ModelInfo, StreamEvent, TagsResponse, VersionResponse,
+    ChatChunk, ChatMessage, ChatOptions, ChatRequestBody, ConnectionInfo, GenerationOutcome,
+    GenerationStats, GenerationStatus, ModelDetails, ModelInfo, StreamEvent, TagsResponse,
+    VersionResponse,
 };
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::settings::normalize_endpoint;
@@ -102,6 +103,8 @@ impl OllamaClient {
             ErrorKind::ToolsUnsupported
         } else if status == reqwest::StatusCode::NOT_FOUND && message.contains("not found") {
             ErrorKind::ModelNotFound
+        } else if is_model_output_error(&message) {
+            ErrorKind::Malformed
         } else {
             ErrorKind::Http
         };
@@ -147,6 +150,26 @@ impl OllamaClient {
         })
     }
 
+    /// Context length and capabilities of one model (`/api/show`).
+    pub async fn model_details(&self, model: &str) -> AppResult<ModelDetails> {
+        let response = self
+            .http
+            .post(self.url("/api/show"))
+            .timeout(LIST_TIMEOUT)
+            .json(&serde_json::json!({ "model": model }))
+            .send()
+            .await
+            .map_err(|e| self.map_request_error(&e))?;
+        if !response.status().is_success() {
+            return Err(self.error_from_response(response).await);
+        }
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| self.map_request_error(&e))?;
+        Ok(parse_model_details(model, &json))
+    }
+
     /// Installed models, sorted by name.
     pub async fn list_models(&self) -> AppResult<Vec<ModelInfo>> {
         let tags: TagsResponse = self.get_json("/api/tags", LIST_TIMEOUT).await?;
@@ -166,11 +189,13 @@ impl OllamaClient {
     /// Returns `Cancelled` (with the partial output) when `cancel` fires. The
     /// HTTP response is dropped on cancel, which closes the connection and
     /// tells Ollama to stop generating.
+    #[allow(clippy::too_many_arguments)]
     pub async fn chat_stream<F>(
         &self,
         model: &str,
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
+        options: ChatOptions,
         cancel: &CancellationToken,
         timeouts: StreamTimeouts,
         mut emit: F,
@@ -195,6 +220,7 @@ impl OllamaClient {
             messages,
             stream: true,
             tools,
+            options,
         };
         let send = self.http.post(self.url("/api/chat")).json(&body).send();
 
@@ -259,6 +285,43 @@ impl OllamaClient {
     }
 }
 
+/// Extract the context length (`<arch>.context_length`) and capabilities.
+pub fn parse_model_details(model: &str, json: &serde_json::Value) -> ModelDetails {
+    let context_length = json
+        .get("model_info")
+        .and_then(|i| i.as_object())
+        .and_then(|info| {
+            info.iter()
+                .find(|(k, _)| k.ends_with(".context_length"))
+                .and_then(|(_, v)| v.as_u64())
+        });
+    let capabilities = json
+        .get("capabilities")
+        .and_then(|c| c.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    ModelDetails {
+        name: model.to_string(),
+        context_length,
+        capabilities,
+    }
+}
+
+/// Ollama reports tool calls it could not parse from the model's output as
+/// errors (e.g. "Value looks like object, but can't find closing '}' symbol").
+/// These are malformed model output, which a retry usually fixes.
+fn is_model_output_error(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    m.contains("can't find closing")
+        || m.contains("error parsing tool call")
+        || m.contains("failed to parse tool call")
+        || m.contains("value looks like object")
+}
+
 /// Fold one chunk into the outcome. Returns `true` when the stream is done.
 fn apply_chunk<F: FnMut(StreamEvent)>(
     chunk: ChatChunk,
@@ -268,6 +331,8 @@ fn apply_chunk<F: FnMut(StreamEvent)>(
     if let Some(error) = chunk.error {
         let kind = if error.contains("not found") {
             ErrorKind::ModelNotFound
+        } else if is_model_output_error(&error) {
+            ErrorKind::Malformed
         } else {
             ErrorKind::Http
         };
@@ -396,9 +461,15 @@ mod tests {
         .await;
         let mut events = Vec::new();
         let outcome = client(&base)
-            .chat_stream("m", &msgs(), &[], &CancellationToken::new(), fast(), |e| {
-                events.push(e)
-            })
+            .chat_stream(
+                "m",
+                &msgs(),
+                &[],
+                ChatOptions::default(),
+                &CancellationToken::new(),
+                fast(),
+                |e| events.push(e),
+            )
             .await
             .unwrap();
         assert_eq!(outcome.status, GenerationStatus::Completed);
@@ -433,6 +504,7 @@ mod tests {
                 "m",
                 &msgs(),
                 &tools,
+                ChatOptions::default(),
                 &CancellationToken::new(),
                 fast(),
                 |_| {},
@@ -462,6 +534,7 @@ mod tests {
                 "m",
                 &msgs(),
                 &tools,
+                ChatOptions::default(),
                 &CancellationToken::new(),
                 fast(),
                 |_| {},
@@ -476,10 +549,54 @@ mod tests {
         let (base, requests) =
             test_server::serve(vec![MockResponse::chunked(200, vec![STREAM.into()])]).await;
         client(&base)
-            .chat_stream("m", &msgs(), &[], &CancellationToken::new(), fast(), |_| {})
+            .chat_stream(
+                "m",
+                &msgs(),
+                &[],
+                ChatOptions::default(),
+                &CancellationToken::new(),
+                fast(),
+                |_| {},
+            )
             .await
             .unwrap();
         assert!(!requests.lock().await[0].contains("\"tools\""));
+    }
+
+    #[test]
+    fn parses_model_details() {
+        let json = serde_json::json!({
+            "model_info": { "general.architecture": "qwen3", "qwen3.context_length": 40960 },
+            "capabilities": ["completion", "tools", "thinking"]
+        });
+        let d = parse_model_details("qwen3:8b", &json);
+        assert_eq!(d.context_length, Some(40960));
+        assert_eq!(d.capabilities, vec!["completion", "tools", "thinking"]);
+        assert_eq!(
+            parse_model_details("x", &serde_json::json!({})).context_length,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn sends_num_ctx_only_when_set() {
+        let (base, requests) =
+            test_server::serve(vec![MockResponse::chunked(200, vec![STREAM.into()])]).await;
+        client(&base)
+            .chat_stream(
+                "m",
+                &msgs(),
+                &[],
+                ChatOptions {
+                    num_ctx: Some(8192),
+                },
+                &CancellationToken::new(),
+                fast(),
+                |_| {},
+            )
+            .await
+            .unwrap();
+        assert!(requests.lock().await[0].contains(r#""options":{"num_ctx":8192}"#));
     }
 
     #[tokio::test]
@@ -494,6 +611,7 @@ mod tests {
                 "nope",
                 &msgs(),
                 &[],
+                ChatOptions::default(),
                 &CancellationToken::new(),
                 fast(),
                 |_| {},
@@ -505,6 +623,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unparseable_tool_call_is_malformed() {
+        let (base, _) = test_server::serve(vec![MockResponse::json(
+            200,
+            r#"{"error":"Value looks like object, but can't find closing '}' symbol"}"#,
+        )])
+        .await;
+        let err = client(&base)
+            .chat_stream(
+                "m",
+                &msgs(),
+                &[],
+                ChatOptions::default(),
+                &CancellationToken::new(),
+                fast(),
+                |_| {},
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Malformed);
+    }
+
+    #[tokio::test]
     async fn server_error_maps_to_http() {
         let (base, _) = test_server::serve(vec![MockResponse::json(
             500,
@@ -512,7 +652,15 @@ mod tests {
         )])
         .await;
         let err = client(&base)
-            .chat_stream("m", &msgs(), &[], &CancellationToken::new(), fast(), |_| {})
+            .chat_stream(
+                "m",
+                &msgs(),
+                &[],
+                ChatOptions::default(),
+                &CancellationToken::new(),
+                fast(),
+                |_| {},
+            )
             .await
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Http);
@@ -526,7 +674,15 @@ mod tests {
         let (base, _) =
             test_server::serve(vec![MockResponse::chunked(200, vec![body.into()])]).await;
         let err = client(&base)
-            .chat_stream("m", &msgs(), &[], &CancellationToken::new(), fast(), |_| {})
+            .chat_stream(
+                "m",
+                &msgs(),
+                &[],
+                ChatOptions::default(),
+                &CancellationToken::new(),
+                fast(),
+                |_| {},
+            )
             .await
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Http);
@@ -540,11 +696,19 @@ mod tests {
             test_server::serve(vec![MockResponse::chunked(200, vec![body.into()])]).await;
         let mut content = String::new();
         let err = client(&base)
-            .chat_stream("m", &msgs(), &[], &CancellationToken::new(), fast(), |e| {
-                if let StreamEvent::Content { text } = e {
-                    content.push_str(&text);
-                }
-            })
+            .chat_stream(
+                "m",
+                &msgs(),
+                &[],
+                ChatOptions::default(),
+                &CancellationToken::new(),
+                fast(),
+                |e| {
+                    if let StreamEvent::Content { text } = e {
+                        content.push_str(&text);
+                    }
+                },
+            )
             .await
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Interrupted);
@@ -559,7 +723,15 @@ mod tests {
         )])
         .await;
         let err = client(&base)
-            .chat_stream("m", &msgs(), &[], &CancellationToken::new(), fast(), |_| {})
+            .chat_stream(
+                "m",
+                &msgs(),
+                &[],
+                ChatOptions::default(),
+                &CancellationToken::new(),
+                fast(),
+                |_| {},
+            )
             .await
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Malformed);
@@ -569,7 +741,15 @@ mod tests {
     async fn silent_server_times_out() {
         let (base, _) = test_server::serve(vec![MockResponse::silent()]).await;
         let err = client(&base)
-            .chat_stream("m", &msgs(), &[], &CancellationToken::new(), fast(), |_| {})
+            .chat_stream(
+                "m",
+                &msgs(),
+                &[],
+                ChatOptions::default(),
+                &CancellationToken::new(),
+                fast(),
+                |_| {},
+            )
             .await
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Timeout);
@@ -583,7 +763,15 @@ mod tests {
         ])
         .await;
         let err = client(&base)
-            .chat_stream("m", &msgs(), &[], &CancellationToken::new(), fast(), |_| {})
+            .chat_stream(
+                "m",
+                &msgs(),
+                &[],
+                ChatOptions::default(),
+                &CancellationToken::new(),
+                fast(),
+                |_| {},
+            )
             .await
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Timeout);
@@ -604,6 +792,7 @@ mod tests {
                 "m",
                 &msgs(),
                 &[],
+                ChatOptions::default(),
                 &cancel,
                 StreamTimeouts::default(),
                 move |e| {
@@ -632,6 +821,7 @@ mod tests {
                 "m",
                 &msgs(),
                 &[],
+                ChatOptions::default(),
                 &cancel,
                 StreamTimeouts::default(),
                 |_| {},

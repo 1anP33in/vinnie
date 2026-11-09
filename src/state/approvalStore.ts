@@ -32,6 +32,8 @@ function describe(request: ApprovalRequest): string {
       return `Approval: ${request.preview.kind} ${request.preview.path}`;
     case "read":
       return `Approval: read ${request.path}`;
+    case "mcp":
+      return `Approval: ${request.server.name} ${request.tool}`;
   }
 }
 

@@ -1,11 +1,12 @@
 // Command tools. The backend classifies every command (blocked / approval /
-// low risk) and enforces it; these tools show the approval card and report
-// the real outcome, including failures.
+// low risk) and enforces it; the permission manager decides whether to ask
+// the user; results report the real exit code, timeouts, and cancellation.
 
 import { z } from "zod";
 import { diagnose } from "@/lib/diagnose";
 import type { RunResult } from "@/lib/ipc/types";
-import type { ToolContext, ToolResult, VinnieTool } from "../types";
+import { recoveryHint } from "../runtime/recovery";
+import { toolFailure, toolSuccess, type ToolContext, type ToolResult, type VinnieTool } from "../types";
 
 const TAIL_CHARS = 4_000;
 
@@ -31,48 +32,81 @@ export function formatRunResult(result: RunResult): string {
   ];
   if (o.stdoutTail.trim()) parts.push(`--- stdout (end) ---\n${tail(o.stdoutTail)}`);
   if (o.stderrTail.trim()) parts.push(`--- stderr (end) ---\n${tail(o.stderrTail)}`);
-  if (!o.success) {
+  if (!o.success && !o.cancelled && !o.timedOut) {
     const d = diagnose(`${o.stderrTail}\n${o.stdoutTail}`);
-    if (d) parts.push(`Likely cause: ${d.cause}\nSuggested next step: ${d.suggestion}`);
+    if (d) parts.push(`Likely cause: ${d.cause}`);
   }
   return parts.join("\n");
 }
+
+/** Convert a finished run into a structured tool result. */
+export function runToResult(result: RunResult, failureCode: "COMMAND_FAILED" | "DEPENDENCY_FAILURE" = "COMMAND_FAILED"): ToolResult {
+  const o = result.outcome;
+  const text = formatRunResult(result);
+  const metadata = { durationMs: o.durationMs, exitCode: o.exitCode };
+  if (o.success) return toolSuccess(text, { output: result, metadata });
+  if (o.cancelled) return toolFailure("CANCELLED", text, { outcome: "cancelled", output: result, metadata });
+  if (o.timedOut) {
+    return toolFailure("COMMAND_TIMEOUT", text, {
+      outcome: "timed_out",
+      details: recoveryHint("COMMAND_TIMEOUT"),
+      output: result,
+      metadata,
+    });
+  }
+  const d = diagnose(`${o.stderrTail}\n${o.stdoutTail}`);
+  return toolFailure(failureCode, text, { details: recoveryHint(failureCode, d), output: result, metadata });
+}
+
+type InstallInfo = { manager: string; packages: string[]; candidates: string[]; ambiguous: boolean; detectionReason: string };
 
 async function gateAndRun(
   command: string,
   opts: { reason?: string; cwd?: string; timeoutSecs?: number },
   ctx: ToolContext,
-  install?: { manager: string; packages: string[]; candidates: string[]; ambiguous: boolean; detectionReason: string },
+  install?: InstallInfo,
 ): Promise<{ result: RunResult } | ToolResult> {
   const check = await ctx.services.process.assess(command, "assistant");
   if (check.requirement === "blocked") {
-    return { ok: false, kind: "blocked", error: `Blocked by Vinnie's command policy: ${check.assessment.reason}` };
+    return toolFailure("PERMISSION_DENIED", `Blocked by Vinnie's command policy: ${check.assessment.reason}`, {
+      outcome: "denied",
+      details: "Blocked commands can never run. Choose a different approach.",
+    });
   }
   if (check.requirement === "denied") {
-    return { ok: false, kind: "permission_denied", error: "The user's settings do not allow Vinnie to run this command." };
+    return toolFailure("PERMISSION_DENIED", "The user's settings do not allow Vinnie to run this command.", {
+      outcome: "denied",
+    });
   }
   let approved = false;
   let remember = false;
   if (check.requirement === "approval") {
-    const decision = await ctx.requestApproval({
-      kind: "command",
-      command: check.assessment.command,
-      workspace: check.workspace,
-      cwd: opts.cwd ?? null,
-      reason: opts.reason ?? null,
-      assessment: check.assessment,
-      install,
-    });
-    if (!decision.approved) {
-      return { ok: false, kind: "denied", error: `The user denied running \`${check.assessment.command}\`.` };
+    const auth = await ctx.authorize(
+      {
+        kind: "command",
+        command: check.assessment.command,
+        workspace: check.workspace,
+        cwd: opts.cwd ?? null,
+        reason: opts.reason ?? null,
+        assessment: check.assessment,
+        install,
+      },
+      install || check.assessment.installsDependencies ? "install" : "execute",
+    );
+    if (!auth.approved) {
+      return toolFailure(
+        "PERMISSION_DENIED",
+        auth.reason ?? `The user denied running \`${check.assessment.command}\`.`,
+        { outcome: "denied" },
+      );
     }
-    if (install && decision.manager && decision.manager !== install.manager) {
+    if (install && auth.manager && auth.manager !== install.manager) {
       // The user picked a different package manager for an ambiguous project.
-      const rebuilt = await ctx.services.analysis.installCommand(decision.manager, install.packages);
-      return gateAndRun(rebuilt.display, opts, ctx, { ...install, manager: decision.manager, ambiguous: false });
+      const rebuilt = await ctx.services.analysis.installCommand(auth.manager, install.packages);
+      return gateAndRun(rebuilt.display, opts, ctx, { ...install, manager: auth.manager, ambiguous: false });
     }
     approved = true;
-    remember = decision.remember ?? false;
+    remember = auth.scope === "workspace";
   }
   const result = await ctx.runCommand({
     command: check.assessment.command,
@@ -102,18 +136,19 @@ export const runCommand: VinnieTool<z.infer<typeof runSchema>> = {
       command: { type: "string" },
       reason: { type: "string", description: "Why this command is needed, shown to the user." },
       cwd: { type: "string", description: "Working folder relative to the project root (default: root)." },
-      timeoutSeconds: { type: "integer", description: "Default 600." },
+      timeoutSeconds: { type: "integer", description: "Default from settings (usually 600)." },
     },
     required: ["command"],
   },
   schema: runSchema,
-  capability: "execute",
+  category: "EXECUTE",
+  riskLevel: "high",
   activityKind: "command",
   describe: (i) => `Running ${i.command}`,
   async execute(input, ctx) {
     const outcome = await gateAndRun(input.command, { reason: input.reason, cwd: input.cwd, timeoutSecs: input.timeoutSeconds }, ctx);
     if (!("result" in outcome)) return outcome;
-    return { ok: true, content: formatRunResult(outcome.result) };
+    return runToResult(outcome.result);
   },
 };
 
@@ -139,7 +174,8 @@ export const installDependency: VinnieTool<z.infer<typeof installSchema>> = {
     required: ["packages"],
   },
   schema: installSchema,
-  capability: "install",
+  category: "DEPENDENCY",
+  riskLevel: "high",
   activityKind: "install",
   describe: (i) => `Installing ${i.packages.length ? i.packages.join(", ") : "project dependencies"}`,
   async execute(input, ctx) {
@@ -150,7 +186,10 @@ export const installDependency: VinnieTool<z.infer<typeof installSchema>> = {
     let detectionReason = manager ? "Requested explicitly." : "";
     if (!manager) {
       if (detections.length === 0) {
-        return { ok: false, error: "No package manager was detected in this project (no package.json, requirements.txt, Cargo.toml, ...)." };
+        return toolFailure(
+          "DEPENDENCY_FAILURE",
+          "No package manager was detected in this project (no package.json, requirements.txt, Cargo.toml, ...).",
+        );
       }
       const primary = detections[0]!;
       candidates = primary.candidates;
@@ -168,11 +207,11 @@ export const installDependency: VinnieTool<z.infer<typeof installSchema>> = {
     });
     if (!("result" in outcome)) return outcome;
     ctx.projectChanged();
-    const o = outcome.result.outcome;
     const what = input.packages.length ? input.packages.join(", ") : "the project's dependencies";
-    const verdict = o.success
+    const result = runToResult(outcome.result, "DEPENDENCY_FAILURE");
+    const verdict = result.success
       ? `Installed ${what} successfully.`
       : `Installing ${what} FAILED. Nothing should be assumed installed.`;
-    return { ok: true, content: `${verdict}\n${formatRunResult(outcome.result)}` };
+    return { ...result, summary: `${verdict}\n${result.summary}` };
   },
 };

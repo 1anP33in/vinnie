@@ -1,8 +1,11 @@
-import { FileWarning, Package, ShieldQuestion, Terminal } from "lucide-react";
+import { FileWarning, Package, Plug, ShieldQuestion, Terminal } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/common/Button";
 import { DiffView } from "@/components/editor/DiffView";
-import type { ApprovalRequest } from "@/agent/types";
+import { redact } from "@/agent/runtime/redact";
+import type { ApprovalRequest, PermissionScope } from "@/agent/types";
+import { PERMISSION_LABEL } from "@/mcp/classify";
+import { useEditorStore } from "@/state/editorStore";
 import { useApprovalStore, type PendingApproval } from "@/state/approvalStore";
 
 function Field({ label, children, mono }: { label: string; children: React.ReactNode; mono?: boolean }) {
@@ -58,7 +61,53 @@ function CommandBody({ request, manager, setManager }: {
         {request.cwd ? `\\${request.cwd}` : ""}
       </Field>
       {request.reason && <Field label="Reason">{request.reason}</Field>}
-      <Field label="Why approval">{request.assessment.reason}</Field>
+      <Field label="Risk">
+        <span className={request.assessment.risk === "low" ? "text-success" : "text-warning"}>
+          {request.install ? "Installs packages (high)" : request.assessment.risk === "low" ? "Low" : "Needs approval (high)"}
+        </span>{" "}
+        <span className="text-faint">— {request.assessment.reason}</span>
+      </Field>
+    </div>
+  );
+}
+
+/** One argument value, shortened for the card (secrets already redacted). */
+function argText(value: unknown): string {
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  if (text === undefined) return String(value);
+  return text.length > 400 ? `${text.slice(0, 400)}… (${text.length - 400} more characters)` : text;
+}
+
+function McpBody({ request }: { request: Extract<ApprovalRequest, { kind: "mcp" }> }) {
+  const args = Object.entries(redact(request.arguments) as Record<string, unknown>);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Field label="Server">{request.server.name}</Field>
+      <Field label="Tool" mono>
+        <span data-testid="approval-tool">{request.tool}</span>
+      </Field>
+      {args.length === 0 ? (
+        <Field label="Arguments">
+          <span className="text-faint">none</span>
+        </Field>
+      ) : (
+        args.slice(0, 12).map(([k, v]) => (
+          <Field key={k} label={k} mono>
+            <span className="whitespace-pre-wrap">{argText(v)}</span>
+          </Field>
+        ))
+      )}
+      {args.length > 12 && <p className="text-xs text-faint">… {args.length - 12} more arguments</p>}
+      {request.reason && <Field label="Reason">{request.reason}</Field>}
+      <Field label="Risk">
+        <span className={request.destructive ? "text-danger" : "text-warning"}>
+          {PERMISSION_LABEL[request.permission]}
+          {request.destructive ? " — destructive, may not be reversible" : " — acts outside your project"}
+        </span>
+      </Field>
+      <p className="text-xs text-faint">
+        This runs on an external MCP server. Vinnie can't undo it from the Changes panel.
+      </p>
     </div>
   );
 }
@@ -67,6 +116,7 @@ function ApprovalItem({ item }: { item: PendingApproval }) {
   const respond = useApprovalStore((s) => s.respond);
   const { request } = item;
   const [manager, setManager] = useState(request.kind === "command" ? (request.install?.manager ?? "") : "");
+  const [confirmed, setConfirmed] = useState(false);
 
   let icon: React.ReactNode;
   let title: string;
@@ -77,15 +127,21 @@ function ApprovalItem({ item }: { item: PendingApproval }) {
     icon = request.install ? <Package size={15} className="text-accent" /> : <Terminal size={15} className="text-accent" />;
     title = request.install ? "Vinnie wants to install dependencies:" : "Vinnie wants to run:";
     body = <CommandBody request={request} manager={manager} setManager={setManager} />;
-    const decide = (approved: boolean, remember = false) =>
-      respond(item.id, { approved, remember, manager: request.install ? manager : undefined });
+    const decide = (approved: boolean, scope: PermissionScope = "once") =>
+      respond(item.id, { approved, scope, manager: request.install ? manager : undefined });
     actions = (
       <>
         <Button size="sm" variant="primary" onClick={() => decide(true)}>
           Allow once
         </Button>
+        <Button size="sm" onClick={() => decide(true, "task")} title="Allow this exact command until the current task ends">
+          Allow for this task
+        </Button>
+        <Button size="sm" onClick={() => decide(true, "session")} title="Allow this exact command until Vinnie restarts">
+          This session
+        </Button>
         {!request.install?.ambiguous && (
-          <Button size="sm" onClick={() => decide(true, true)} title="Always allow this exact command in this project">
+          <Button size="sm" onClick={() => decide(true, "workspace")} title="Always allow this exact command in this project">
             Always allow
           </Button>
         )}
@@ -114,6 +170,9 @@ function ApprovalItem({ item }: { item: PendingApproval }) {
           )}
         </Field>
         {request.reason && <Field label="Reason">{request.reason}</Field>}
+        <Field label="Risk">
+          <span className="text-warning">{p.kind === "delete" ? "Deletes a file (reversible)" : "Changes project files (reversible)"}</span>
+        </Field>
         {p.kind !== "move" &&
           (p.binary ? (
             <p className="text-xs text-warning">Binary file: no text diff available.</p>
@@ -131,13 +190,75 @@ function ApprovalItem({ item }: { item: PendingApproval }) {
         {p.kind === "delete" && <p className="text-xs text-faint">A snapshot is kept, so the file can be restored from Changes.</p>}
       </div>
     );
+    const viewChanges = () =>
+      useEditorStore.getState().openDiff({
+        id: `proposal:${item.id}`,
+        path: p.newPath ?? p.path,
+        title: `${(p.newPath ?? p.path).split("/").pop()} (proposed)`,
+        original: p.before ?? "",
+        modified: p.after ?? "",
+      });
     actions = (
       <>
         <Button size="sm" variant={p.kind === "delete" ? "danger" : "primary"} onClick={() => respond(item.id, { approved: true })}>
-          {p.kind === "delete" ? "Delete" : "Apply change"}
+          {p.kind === "delete" ? "Delete" : "Approve"}
         </Button>
-        <Button size="sm" onClick={() => respond(item.id, { approved: false })}>
-          Reject
+        {p.kind !== "delete" && (
+          <Button
+            size="sm"
+            onClick={() => respond(item.id, { approved: true, scope: "task" })}
+            title="Approve this and Vinnie's other file changes until the current task ends"
+          >
+            Approve all for this task
+          </Button>
+        )}
+        <Button size="sm" variant="danger" onClick={() => respond(item.id, { approved: false })}>
+          Deny
+        </Button>
+        {p.kind !== "move" && !p.binary && (
+          <Button size="sm" variant="ghost" onClick={viewChanges}>
+            View changes
+          </Button>
+        )}
+      </>
+    );
+  } else if (request.kind === "mcp") {
+    icon = <Plug size={15} className={request.destructive ? "text-danger" : "text-accent"} />;
+    title = `Vinnie wants to use ${request.server.name}:`;
+    body = (
+      <>
+        <McpBody request={request} />
+        {request.destructive && (
+          <label className="mt-2 flex items-center gap-2 text-xs text-danger">
+            <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
+            I understand this may permanently delete or change data on {request.server.name}.
+          </label>
+        )}
+      </>
+    );
+    const decide = (approved: boolean, scope: PermissionScope = "once") => respond(item.id, { approved, scope });
+    actions = (
+      <>
+        <Button
+          size="sm"
+          variant={request.destructive ? "danger" : "primary"}
+          disabled={request.destructive && !confirmed}
+          onClick={() => decide(true)}
+        >
+          Allow once
+        </Button>
+        {!request.destructive && (
+          <>
+            <Button size="sm" onClick={() => decide(true, "task")} title={`Allow ${request.tool} until the current task ends`}>
+              Allow for this task
+            </Button>
+            <Button size="sm" onClick={() => decide(true, "session")} title={`Allow ${request.tool} until Vinnie restarts`}>
+              Allow for session
+            </Button>
+          </>
+        )}
+        <Button size="sm" variant={request.destructive ? "secondary" : "danger"} onClick={() => decide(false)}>
+          Deny
         </Button>
       </>
     );

@@ -1,0 +1,31 @@
+{
+  "id": "git-assistance",
+  "name": "Git Assistance",
+  "description": "Git workflows: status, diffs, branches, commits, and safe history operations.",
+  "version": "1.0.0",
+  "author": "Vinnie",
+  "tags": [
+    "git",
+    "github"
+  ],
+  "match": {
+    "keywords": [
+      "git",
+      "commit",
+      "branch",
+      "merge",
+      "rebase",
+      "pull request",
+      "diff",
+      "stash",
+      "github",
+      "repository",
+      "repo"
+    ],
+    "languages": [],
+    "projectTypes": []
+  },
+  "tools": [
+    "github.*"
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "id": "typescript-development",
+  "name": "TypeScript Development",
+  "description": "Type-safe TypeScript: precise types, strict mode, and clean module boundaries.",
+  "version": "1.0.0",
+  "author": "Vinnie",
+  "tags": [
+    "typescript"
+  ],
+  "match": {
+    "keywords": [
+      "typescript",
+      "tsconfig",
+      "types",
+      "interface",
+      "generic",
+      "tsc"
+    ],
+    "languages": [
+      "TypeScript"
+    ],
+    "projectTypes": []
+  },
+  "tools": []
+}

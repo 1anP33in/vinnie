@@ -1,47 +1,42 @@
-// File-changing tools. Every change is previewed as a diff, approved by the
-// user (unless WRITE is set to "allowed"; deletions always ask), applied
-// through the change manager (snapshot + history), and can be reverted.
+// File-changing tools. Every change is previewed as a diff, authorized by
+// the permission manager (agent mode, settings, scoped grants, or the user),
+// applied through the change manager (snapshot + history), and reversible.
 
 import { z } from "zod";
 import type { FileOperation } from "@/lib/ipc/types";
-import type { ToolContext, ToolResult, VinnieTool } from "../types";
+import { toolFailure, toolSuccess, type ToolContext, type ToolResult, type VinnieTool } from "../types";
 
 const reasonField = {
   reason: { type: "string", description: "One sentence explaining why, shown to the user." },
 };
 
 async function proposeAndApply(op: FileOperation, reason: string | undefined, ctx: ToolContext): Promise<ToolResult> {
-  if (ctx.permissions.write === "denied") {
-    return {
-      ok: false,
-      kind: "permission_denied",
-      error: "The user's settings do not allow Vinnie to change files.",
-    };
-  }
   const preview = await ctx.services.changes.preview(op);
-  const needsApproval = ctx.permissions.write !== "allowed" || op.kind === "delete";
-  if (needsApproval) {
-    const decision = await ctx.requestApproval({
-      kind: "file",
-      operation: op,
-      preview,
-      reason: reason ?? null,
-      workspace: ctx.workspaceRoot,
-    });
-    if (!decision.approved) {
-      return { ok: false, kind: "denied", error: "The user rejected this change. Do not retry it unless asked." };
-    }
+  const auth = await ctx.authorize(
+    { kind: "file", operation: op, preview, reason: reason ?? null, workspace: ctx.workspaceRoot },
+    op.kind === "delete" ? "delete" : "write",
+  );
+  if (!auth.approved) {
+    return toolFailure(
+      "PERMISSION_DENIED",
+      auth.reason ?? "The user rejected this change. Do not retry it unless asked.",
+      { outcome: "denied" },
+    );
   }
   const record = await ctx.services.changes.apply(op, {
-    access: { actor: "assistant", approved: needsApproval },
+    access: { actor: "assistant", approved: true },
     taskId: ctx.taskId,
     description: reason ?? null,
   });
-  ctx.filesChanged(op.kind === "move" ? [op.from, op.to] : [op.path]);
+  const paths = op.kind === "move" ? [op.from, op.to] : [op.path];
+  ctx.filesChanged(paths);
   const target = record.newPath ? `${record.path} → ${record.newPath}` : record.path;
   const verb = { create: "Created", modify: "Modified", delete: "Deleted", move: "Moved" }[record.kind];
   const stats = record.kind === "move" ? "" : ` (+${record.additions} −${record.deletions})`;
-  return { ok: true, content: `${verb} ${target}${stats}. Change #${record.id} can be reverted from the Changes panel.` };
+  return toolSuccess(`${verb} ${target}${stats}. Change #${record.id} can be reverted from the Changes panel.`, {
+    output: record,
+    metadata: { filesChanged: paths, changeIds: [record.id] },
+  });
 }
 
 const pathField = { path: { type: "string", description: "File path relative to the project root." } };
@@ -61,7 +56,8 @@ export const createFile: VinnieTool<z.infer<typeof writeSchema>> = {
     required: ["path", "content"],
   },
   schema: writeSchema,
-  capability: "write",
+  category: "WRITE",
+  riskLevel: "moderate",
   activityKind: "write",
   describe: (i) => `Preparing new file ${i.path}`,
   execute: (i, ctx) => proposeAndApply({ kind: "create", path: i.path, content: i.content }, i.reason, ctx),
@@ -70,14 +66,15 @@ export const createFile: VinnieTool<z.infer<typeof writeSchema>> = {
 export const writeFile: VinnieTool<z.infer<typeof writeSchema>> = {
   name: "write_file",
   description:
-    "Replace the entire content of a file (creating it if needed). Always read the file first and send the complete new content. The user reviews a diff first.",
+    "Replace the entire content of a file (creating it if needed). Always read the file first, keep unrelated content unchanged, and send the complete new content. The user reviews a diff first.",
   inputSchema: {
     type: "object",
     properties: { ...pathField, content: { type: "string", description: "The complete new file content." }, ...reasonField },
     required: ["path", "content"],
   },
   schema: writeSchema,
-  capability: "write",
+  category: "WRITE",
+  riskLevel: "moderate",
   activityKind: "write",
   describe: (i) => `Preparing changes to ${i.path}`,
   execute: (i, ctx) => proposeAndApply({ kind: "write", path: i.path, content: i.content }, i.reason, ctx),
@@ -90,7 +87,8 @@ export const deleteFile: VinnieTool<z.infer<typeof deleteSchema>> = {
   description: "Delete a file (or an empty folder). Always requires the user's confirmation; the file can be restored from the Changes panel.",
   inputSchema: { type: "object", properties: { ...pathField, ...reasonField }, required: ["path"] },
   schema: deleteSchema,
-  capability: "write",
+  category: "DELETE",
+  riskLevel: "moderate",
   activityKind: "write",
   describe: (i) => `Preparing to delete ${i.path}`,
   execute: (i, ctx) => proposeAndApply({ kind: "delete", path: i.path }, i.reason, ctx),
@@ -115,7 +113,8 @@ export const moveFile: VinnieTool<z.infer<typeof moveSchema>> = {
     required: ["from", "to"],
   },
   schema: moveSchema,
-  capability: "write",
+  category: "WRITE",
+  riskLevel: "moderate",
   activityKind: "write",
   describe: (i) => `Preparing to move ${i.from} to ${i.to}`,
   execute: (i, ctx) => proposeAndApply({ kind: "move", from: i.from, to: i.to }, i.reason, ctx),

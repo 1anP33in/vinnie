@@ -13,6 +13,8 @@ export type ActivityKind =
   | "analysis"
   | "approval"
   | "model"
+  | "mcp"
+  | "skill"
   | "error";
 
 export type ActivityStatus = "running" | "success" | "error" | "denied" | "cancelled";

@@ -129,6 +129,21 @@ function IgnoredDirsInput({ value, onChange }: { value: string[]; onChange(v: st
   );
 }
 
+const AGENT_MODE_HINT: Record<Settings["agent"]["mode"], string> = {
+  ask: "Ask: Vinnie only reads and answers. It never changes files or runs commands.",
+  assist: "Assist: Vinnie can act, but asks before every change and every command.",
+  agent: "Agent: Vinnie plans and works through tasks, asking only where your permission rules require it.",
+};
+
+const AGENT_NUMBERS: [keyof Settings["agent"], string, number, number][] = [
+  ["maxIterations", "Max iterations", 1, 200],
+  ["maxToolCalls", "Max tool calls", 1, 500],
+  ["maxRetries", "Max retries", 0, 10],
+  ["commandTimeoutSecs", "Command timeout (s)", 5, 3600],
+  ["taskTimeoutMins", "Task timeout (min)", 1, 240],
+  ["maxChangedFiles", "Max changed files", 1, 500],
+];
+
 const inputClass =
   "h-9 rounded-md border border-border bg-bg px-3 text-sm outline-none focus:border-accent aria-[invalid=true]:border-danger";
 
@@ -178,6 +193,8 @@ export function SettingsView() {
       setDraftModels(null);
     }
   };
+
+  const updateAgent = (patch: Partial<Settings["agent"]>) => update("agent", { ...draft.agent, ...patch });
 
   const models = draftModels ?? connection.models;
   const defaultModelMissing = !!draft.defaultModel && !models.some((m) => m.name === draft.defaultModel);
@@ -419,6 +436,75 @@ export function SettingsView() {
             <Field label="Always-allowed commands in this project">
               <AllowedCommands />
             </Field>
+          </Section>
+
+          <Section
+            title="Agent"
+            description="How Vinnie works on multi-step tasks. Limits are enforced by the app; the model cannot raise them."
+          >
+            <Field label="Mode" hint={AGENT_MODE_HINT[draft.agent.mode]}>
+              <div className="flex items-center gap-2">
+                <Segmented
+                  label="Agent mode"
+                  value={draft.agent.mode}
+                  onChange={(mode) => updateAgent({ mode })}
+                  options={[
+                    { value: "ask", label: "Ask" },
+                    { value: "assist", label: "Assist" },
+                    { value: "agent", label: "Agent" },
+                  ]}
+                />
+                <span className="rounded-md border border-dashed border-border px-2.5 py-1 text-xs text-faint" title="Reserved for a later phase">
+                  Full Auto — coming later
+                </span>
+              </div>
+            </Field>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+              {AGENT_NUMBERS.map(([key, label, min, max]) => (
+                <Field key={key} label={label} htmlFor={`agent-${key}`}>
+                  <input
+                    id={`agent-${key}`}
+                    type="number"
+                    min={min}
+                    max={max}
+                    value={draft.agent[key] as number}
+                    onChange={(e) => updateAgent({ [key]: Number(e.target.value) } as Partial<Settings["agent"]>)}
+                    className={inputClass}
+                  />
+                </Field>
+              ))}
+            </div>
+            <Field label="Context budget" hint="Tokens sent to the model per step. Auto uses the model's context size, capped at 16,384.">
+              <Segmented
+                label="Context budget"
+                value={String(draft.agent.contextBudget)}
+                onChange={(v) => updateAgent({ contextBudget: Number(v) })}
+                options={[
+                  { value: "0", label: "Auto" },
+                  { value: "4096", label: "4K" },
+                  { value: "8192", label: "8K" },
+                  { value: "16384", label: "16K" },
+                  { value: "32768", label: "32K" },
+                ]}
+              />
+            </Field>
+            <Toggle
+              label="Verify changes automatically"
+              description="After Vinnie changes files, check them and run the project's typecheck/lint/test/build scripts before reporting success."
+              checked={draft.agent.autoVerify}
+              onChange={(autoVerify) => updateAgent({ autoVerify })}
+            />
+            <Toggle
+              label="Task debug view"
+              description="Show tool arguments, results, token usage, and retries in the Task panel (secrets are redacted)."
+              checked={draft.agent.debugView}
+              onChange={(debugView) => updateAgent({ debugView })}
+            />
+            {errors.agent && (
+              <p className="text-xs text-danger" role="alert">
+                {errors.agent}
+              </p>
+            )}
           </Section>
 
           <Section title="Ignored folders" description="Skipped by the explorer (shown dimmed), search, and project analysis.">

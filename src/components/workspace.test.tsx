@@ -53,7 +53,7 @@ describe("approval cards", () => {
     expect(card).toHaveTextContent("C:\\Projects\\MyProject");
     expect(card).toHaveTextContent("Install the dependency required by the application.");
     await user.click(within(card).getByRole("button", { name: "Always allow" }));
-    const expected: ApprovalDecision = { approved: true, remember: true, manager: undefined };
+    const expected: ApprovalDecision = { approved: true, scope: "workspace", manager: undefined };
     await expect(decision).resolves.toEqual(expected);
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
@@ -80,7 +80,7 @@ describe("approval cards", () => {
     render(<ApprovalCards />);
     expect(screen.getByTestId("diff-original")).toHaveTextContent("Config.Debug = false");
     expect(screen.getByTestId("diff-modified")).toHaveTextContent("Config.Debug = true");
-    await user.click(screen.getByRole("button", { name: "Reject" }));
+    await user.click(screen.getByRole("button", { name: "Deny" }));
     await expect(decision).resolves.toEqual({ approved: false });
   });
 });

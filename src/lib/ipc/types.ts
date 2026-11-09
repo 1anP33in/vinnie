@@ -56,6 +56,17 @@ export interface ModelInfo {
   quantization: string | null;
 }
 
+export interface ModelDetails {
+  name: string;
+  contextLength: number | null;
+  capabilities: string[];
+}
+
+export interface LaunchResult {
+  status: "started" | "alreadyRunning";
+  executable: string | null;
+}
+
 export interface ConnectionInfo {
   endpoint: string;
   version: string;
@@ -107,6 +118,23 @@ export interface Settings {
   ignoredDirectories: string[];
   toolsEnabled: boolean;
   projectContextEnabled: boolean;
+  agent: AgentSettings;
+}
+
+export type AgentModeSetting = "ask" | "assist" | "agent";
+
+export interface AgentSettings {
+  mode: AgentModeSetting;
+  maxIterations: number;
+  maxToolCalls: number;
+  maxRetries: number;
+  commandTimeoutSecs: number;
+  taskTimeoutMins: number;
+  maxChangedFiles: number;
+  /** Tokens; 0 = automatic. */
+  contextBudget: number;
+  autoVerify: boolean;
+  debugView: boolean;
 }
 
 export type PermissionLevel = "allowed" | "approval" | "denied";
@@ -383,4 +411,126 @@ export interface ProjectMetadata {
   filesScanned: number;
   scanTruncated: boolean;
   analyzedAt: number;
+}
+
+// ---- Phase 4: MCP servers, tool settings, skills ---------------------------
+
+export type McpTransportType = "stdio" | "http";
+
+/** A configured MCP server. Never contains secret values, only their names. */
+export interface McpServerConfig {
+  /** Short slug, also the namespace of its tools (`github` → `github__list_issues`). */
+  id: string;
+  name: string;
+  description: string;
+  transport: McpTransportType;
+  /** stdio: the executable (resolved on PATH, never via a shell). */
+  command: string | null;
+  args: string[];
+  /** stdio: non-secret environment variables. */
+  env: Record<string, string>;
+  /** stdio: working directory (optional). */
+  cwd: string | null;
+  /** http: the Streamable HTTP endpoint. */
+  url: string | null;
+  /** http: non-secret headers. */
+  headers: Record<string, string>;
+  /** Names of secrets kept in Windows Credential Manager: `env:NAME` or `header:NAME`. */
+  secretKeys: string[];
+  enabled: boolean;
+  autoConnect: boolean;
+  /** Per-call timeout for this server's tools, in seconds. */
+  toolTimeoutSecs: number;
+  /** Default approval policy for this server's tools (per-tool settings override it). */
+  defaultPolicy: ToolPolicy;
+  lastConnectedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** What the user submits when adding or editing a server. */
+export type McpServerInput = Omit<McpServerConfig, "secretKeys" | "lastConnectedAt" | "createdAt" | "updatedAt">;
+
+/** Secret changes: a value sets it, null deletes it, missing keys are kept. */
+export type SecretChanges = Record<string, string | null>;
+
+export type McpStdioEvent =
+  | { type: "message"; line: string }
+  | { type: "stderr"; line: string }
+  | { type: "dropped"; reason: string }
+  | { type: "exit"; code: number | null };
+
+export interface McpHttpRequest {
+  requestId: string;
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body: string | null;
+}
+
+export interface McpHttpResponseHead {
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+}
+
+export type McpHttpBodyEvent = { type: "chunk"; data: string } | { type: "end" } | { type: "error"; message: string };
+
+export interface McpLogEntry {
+  at: number;
+  level: "info" | "warn" | "error" | "stderr";
+  message: string;
+}
+
+/** How a tool may run: always ask, run without asking, or never. */
+export type ToolPolicy = "ask" | "allow" | "deny";
+
+/** User settings and usage stats for one tool (native name or `mcp:<server>:<tool>`). */
+export interface ToolSetting {
+  key: string;
+  enabled: boolean;
+  /** null = use the default (server default for MCP tools). */
+  policy: ToolPolicy | null;
+  runCount: number;
+  lastRunAt: number | null;
+  lastOutcome: string | null;
+}
+
+export interface SkillMatch {
+  keywords: string[];
+  languages: string[];
+  projectTypes: string[];
+}
+
+export interface SkillMeta {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  author: string;
+  tags: string[];
+  match: SkillMatch;
+  /** Tool names or `server.*` patterns this skill tends to use (hints only, never permissions). */
+  tools: string[];
+}
+
+export interface SkillSummary extends SkillMeta {
+  enabled: boolean;
+  builtin: boolean;
+  references: string[];
+  /** Set when the skill folder exists but could not be loaded. */
+  error: string | null;
+}
+
+export interface SkillDetail extends SkillSummary {
+  instructions: string;
+}
+
+/** A portable skill: metadata, instructions, and text references in one JSON file. */
+export interface SkillBundle {
+  format: "vinnie-skill";
+  version: 1;
+  skill: SkillMeta;
+  instructions: string;
+  references: { name: string; content: string }[];
 }

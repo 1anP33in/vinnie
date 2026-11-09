@@ -6,6 +6,7 @@ import type {
   ChatTurn,
   ConnectionInfo,
   GenerationOutcome,
+  ModelDetails,
   ModelInfo,
   StreamEvent,
 } from "@/lib/ipc/types";
@@ -17,6 +18,8 @@ export interface ChatRequest {
   messages: ChatTurn[];
   /** Tool definitions the model may call (function-calling format). */
   tools?: object[];
+  /** Context window to request, in tokens. */
+  numCtx?: number;
 }
 
 export interface GenerationHandle {
@@ -34,4 +37,6 @@ export interface AIProvider {
   checkConnection(endpoint?: string): Promise<ConnectionInfo>;
   listModels(endpoint?: string): Promise<ModelInfo[]>;
   streamChat(request: ChatRequest, onEvent: (event: StreamEvent) => void): GenerationHandle;
+  /** Context length and capabilities of a model, if the provider reports them. */
+  modelDetails(model: string): Promise<ModelDetails>;
 }

@@ -43,6 +43,34 @@ pub struct ChatRequestBody<'a> {
     pub stream: bool,
     #[serde(skip_serializing_if = "<[serde_json::Value]>::is_empty")]
     pub tools: &'a [serde_json::Value],
+    #[serde(skip_serializing_if = "ChatOptions::is_empty")]
+    pub options: ChatOptions,
+}
+
+/// Model options passed through to Ollama.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChatOptions {
+    /// Context window in tokens. Ollama otherwise uses its (small) default
+    /// and silently truncates longer prompts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub num_ctx: Option<u32>,
+}
+
+impl ChatOptions {
+    pub fn is_empty(&self) -> bool {
+        self.num_ctx.is_none()
+    }
+}
+
+/// Model details from `/api/show`.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelDetails {
+    pub name: String,
+    /// Maximum context length the model supports, if reported.
+    pub context_length: Option<u64>,
+    /// e.g. ["completion", "tools", "thinking"]
+    pub capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

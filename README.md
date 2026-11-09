@@ -3,15 +3,18 @@
 Vinnie is a local-first AI developer assistant for Windows. It chats with models running in
 [Ollama](https://ollama.com) on your own machine, and it can work inside a project folder: browse,
 search, and read files, propose edits as reviewable diffs, run development commands, and install
-dependencies. Every action needs your approval or permission, and every change can be reverted.
-No cloud services or API keys are involved.
+dependencies. In Agent mode it plans and carries out multi-step tasks, then verifies the result
+itself. You can extend it with MCP servers (GitHub, filesystems, databases, and more) and with
+skills, without changing its code. Every action needs your approval or permission, and every
+change to your project can be reverted. Nothing leaves your computer unless you connect a remote
+MCP server.
 
 | Phase | Status | Scope |
 | --- | --- | --- |
 | 1. Desktop foundation | Done | Chat with Ollama, streaming, conversations, settings, project selection |
 | 2. Project intelligence and developer tools | Done | Explorer, editor, search, diffs, change history, terminal, dependency management, tool use |
-| 3. Autonomous planning | Planned | Multi-step task planning and execution |
-| 4. MCP and skills | Planned | External tool servers and native skills |
+| 3. Autonomous agent engine | Done | Agent loop, plans, scoped permissions, recovery, verification, task timeline |
+| 4. MCP and skills | Done | MCP servers (stdio and Streamable HTTP), tool permissions, skills, Tool Explorer |
 | 5. Ice dragon viewer | Planned | Animated 3D dragon driven by real agent events |
 
 ## Features
@@ -63,6 +66,78 @@ No cloud services or API keys are involved.
 - **Dragon events**: `dragon.idle`, `thinking`, `reading`, `editing`, `running`, `waiting`, `error`,
   and `success`. They drive the status indicator now and will drive the Phase 5 dragon later.
 
+### Agent (Phase 3)
+- **Agent loop** (`src/agent/runtime/`): observe → ask the model for the next action → validate →
+  authorize → execute → record → feed the result back → repeat. It stops when the work is done, the
+  user stops it, or a limit is reached (iterations, tool calls, task time, changed files). It never
+  loops forever.
+- **Modes**: *Ask* (read-only), *Assist* (asks before every change and command), *Agent* (the
+  default; asks only where your permission rules say so). *Full Auto* is reserved for later and is
+  not implemented.
+- **Plans**: for tasks (not simple questions), the model keeps a visible plan through `update_plan`.
+  You can edit or remove steps while it runs.
+- **Agent panel** above the composer: live status ("Vinnie is reading files…"), current step, plan,
+  tool calls, files changed (+/−), retries, verification, elapsed time, and Pause / Resume / Stop.
+  After the task: the verification checks, per-file View / Revert, *View changes*, *Revert task*,
+  and *Accept changes*.
+- **Task timeline and debug view** (bottom panel → *Task*): every real runtime event. Optionally
+  (Settings → Agent → *Task debug view*) also task id, model, prompt version, tool arguments and
+  results with secrets redacted, durations, token usage, retries, and the task memory.
+- **Scoped approvals**: *Allow once*, *Allow for this task*, *This session*, or *Always allow* (this
+  project, commands only). Task grants expire when the task ends.
+- **Independent verification**: after changes, Vinnie checks that each file has the content it wrote,
+  parses changed JSON, checks FiveM manifest references, and runs the project's own
+  typecheck / lint / test / build scripts (or `cargo check`, `go build`, `dotnet build`, `pytest`).
+  If a check fails, the failure is fed back for a bounded number of repair attempts. The task outcome
+  comes from these checks, never from the model's claims.
+- **Recovery**: failures are classified (`FILE_NOT_FOUND`, `COMMAND_FAILED`, `PERMISSION_DENIED`,
+  `INVALID_ARGUMENT`, `DEPENDENCY_FAILURE`, `MODEL_FAILURE`, …) with a recovery hint. An identical
+  failing call is refused after `maxRetries`. Transient model errors (dropped connection, timeout,
+  unparseable tool call) are retried before any output is shown.
+- **Honest reporting**: every task that used tools ends with an app-written **Task report** (status,
+  files changed, verification checks). If the model writes tool calls as text, Vinnie tells it they
+  did not run. A task that changed nothing is reported as "no files were changed".
+- **Context and tokens**: a token budget (Auto, 4K, 8K, 16K, or 32K; Auto uses the model's context
+  size, capped at 16K). Ollama's `num_ctx` is set to match. Older tool results are compressed first,
+  older conversation turns are condensed into a digest, and a short task memory keeps key facts.
+- **Launch Ollama**: when Vinnie can't reach a local Ollama server, a button with the Ollama icon
+  starts `ollama serve` in the background (no console window) and reconnects when it answers.
+
+### MCP and skills (Phase 4)
+
+**MCP servers** (left rail → plug icon). Connect any [Model Context Protocol](https://modelcontextprotocol.io)
+server:
+
+- **Local (stdio)**: Vinnie launches the program you configure, for example command `npx` with
+  arguments `-y`, `@modelcontextprotocol/server-filesystem`, `C:\Docs`.
+- **Remote (Streamable HTTP)**: a server URL (`https://…`; plain `http://` only for localhost),
+  optional headers, and secret headers such as `Authorization: Bearer …`.
+
+For each server you can add, edit, remove, enable or disable it, connect, disconnect, restart, and
+test the connection. You also see its status (CONNECTED, CONNECTING, DISCONNECTED, ERROR,
+DISABLED), server version, last connection, failures, logs, and discovered tools. Configurations
+can be exported and imported **without secrets**; imported servers start disabled.
+
+- Tools are discovered when a server connects and refreshed when the server reports a change.
+  They appear to the model as `<server>__<tool>` (shown as `server.tool`), so identical names from
+  different servers never collide.
+- Each tool has an enable switch and an approval policy (*ask*, *allow*, *never*), with a
+  per-server default. Destructive tools always ask and need an explicit confirmation.
+- Connections are monitored (pings every 30 s). A dropped server is reconnected up to three times;
+  its tools are marked unavailable and refused while it is down.
+
+**Skills** (left rail → book icon) are folders of instructions that guide Vinnie for a kind of work.
+Ten are built in: FiveM, Lua, Web, TypeScript, Python, C#, Git, Debugging, Database, and
+Documentation. For each request Vinnie picks at most three relevant skills, based on your words,
+the project's languages and type, and the FiveM manifest, and loads only their instructions.
+You can force a skill on or off for the session (book button next to the message box), create
+and edit your own skills, add reference files, disable or delete skills, and import or export
+them as `.vinnie-skill.json` files. The task panel shows which skills were used and why.
+
+**Tool Explorer** (left rail → wrench icon): every native and MCP tool, searchable and grouped
+(native, MCP, development, filesystem, terminal, external services). For each tool it shows the
+source, permission, enable switch, approval policy, last run, and run count.
+
 ## Security model
 
 All enforcement happens in the Rust backend. Neither the model nor the UI can bypass it.
@@ -92,6 +167,40 @@ All enforcement happens in the Rust backend. Neither the model nor the UI can by
   clipboard plugins are not exposed to it.
 - **Logging**: logs record events, tool use, commands, and errors, never message or file contents.
   Settings → *Open log folder*.
+- **Agent permissions**: the model is untrusted. It can only *request* tools.
+  - The `PermissionManager` decides each request from the mode, your settings, and grants that only
+    you can create from approval cards.
+  - The backend still enforces boundaries, the command policy, and denials on its own.
+  - Tools not offered for the current mode or request are refused. Unknown tools are refused.
+    Arguments are schema-validated before anything runs.
+  - Deletions and secret-file reads always ask, even with a session grant.
+  - Stop cancels the model request, denies pending approvals, and stops the commands the task started.
+- **MCP servers are untrusted programs.**
+  - Vinnie classifies every tool itself from its name (READ, WRITE, DELETE, EXECUTE, NETWORK,
+    EXTERNAL_ACTION). Unknown tools count as external actions, and a server's hints can only make
+    a tool *more* sensitive.
+  - Every call goes through the same permission manager as native tools: a policy per tool and
+    per server, scoped grants that only you create, Ask mode limited to read tools, Assist mode
+    asking every time, and destructive tools always asking with a confirmation.
+  - Tool arguments are validated against the tool's JSON schema before you're asked. Tools with
+    invalid schemas are rejected.
+  - Tool descriptions are sanitized and length-limited. Results are size-limited and labeled as
+    untrusted data. A server's `instructions` are ignored. Neither a server nor a skill can change
+    Vinnie's system prompt rules, permissions, or approvals.
+  - **Secrets** (environment variables and headers) are stored in **Windows Credential Manager**,
+    never in Vinnie's database or exports. Only the Rust backend reads them, when it launches a
+    server or sends a request. The webview and the model never see them, and they are redacted
+    from server logs.
+  - **stdio servers** run only the stored command (never through a shell, arguments passed
+    separately), with a minimal environment (system basics plus the server's own variables), no
+    console window, and inside a Windows job object. The job kills them, and anything they
+    started, when they are stopped or when Vinnie exits, even after a crash. Output lines are
+    capped at 8 MB.
+  - **HTTP servers**: requests may only go to the configured origin, redirects are not followed,
+    credentials can't be injected from the webview, and responses are capped at 16 MB.
+- **Skills are guidance, not permissions.** Their instructions are framed as guidance in the
+  prompt, size-limited, and treated as untrusted when imported. Skill ids and reference file names
+  are validated before any path is built, so a skill can't read or write outside its own folder.
 - **Note**: approvals are made in Vinnie's own UI, and the backend requires an explicit approval flag
   for gated operations. The model has no direct access to commands, so it cannot set that flag.
 
@@ -145,11 +254,11 @@ This produces `src-tauri/target/release/vinnie.exe` and an installer at
 
 | Command | What it runs |
 | --- | --- |
-| `pnpm test` | Vitest + React Testing Library (147 tests; Ollama, Tauri, and Monaco mocked) |
+| `pnpm test` | Vitest + React Testing Library (270 tests; Ollama, Tauri, and Monaco mocked; MCP tests use real MCP servers from the official SDK over its in-memory transport) |
 | `pnpm typecheck` | TypeScript, strict mode |
 | `pnpm lint` | ESLint |
 | `pnpm build` | Production frontend build |
-| `pnpm rust:test` | Rust tests (131), including a mock Ollama server, real file I/O, junction escapes, and process timeouts |
+| `pnpm rust:test` | Rust tests (161), including real MCP server processes, Windows Credential Manager, a mock Ollama server, real file I/O, junction escapes, and process timeouts |
 | `pnpm rust:clippy` | Clippy with warnings as errors |
 | `pnpm check` | All of the above |
 
@@ -162,8 +271,15 @@ Vinnie Desktop App (React + TypeScript)
 │                        ▼
 ├── Stores (Zustand): chat orchestration, editor, workspace, search, terminal,
 │                     changes, approvals, activity, dragon
-├── Agent layer: ToolRegistry + 9 VinnieTools (zod-validated), project context,
-│                text tool-call recovery, dragon event bus
+├── Agent runtime: AgentRuntime loop · Planner · ContextManager · TokenManager ·
+│                ToolExecutor + RetryGuard · PermissionManager · VerificationEngine ·
+│                TaskMemory · agent.* event bus (→ agent store, activity feed, dragon)
+├── Agent layer: ToolRegistry (enable switches, availability) + 13 native VinnieTools,
+│                project context, text tool-call recovery
+├── MCP manager: official MCP SDK Client per server · server registry · discovery ·
+│                tool adapter (→ VinnieTool) · health monitor + reconnection ·
+│                transports: stdio and Streamable HTTP, both relayed by the backend
+├── Skills: skill store · selection (request + project) · lazy instruction loading
 └── Services (interfaces) ── typed IPC ──▶ Tauri commands (validated, permission-checked)
                                             │
 Rust backend                                ▼
@@ -175,20 +291,31 @@ Rust backend                                ▼
 ├── analyzer     project types · languages · FiveM manifest · entry points
 ├── git          read-only status
 ├── db/          SQLite migrations · conversations · settings
-└── ollama/      streaming client · tool calls
+├── ollama/      streaming client · tool calls · launcher
+├── mcp/         server configs · secrets (Credential Manager) · stdio relay + job object ·
+│                HTTP relay (origin-locked) · per-server logs
+├── skills       skill folders · built-in skills · validation · import/export
+└── tool_settings  per-tool switches, policies, usage counters
 ```
 
 ```text
 src/
   agent/          tool interface, registry, tools/, context builder, events
+  agent/runtime/  agent loop, planner, permissions, context/tokens, verification, recovery, memory
+  components/agent/  agent panel, plan view, task timeline, task/debug panel
   components/     chat, editor, explorer, search, changes, terminal, activity, layout, settings
+  components/integrations/  MCP manager, skills manager, tool explorer
+  mcp/            MCP manager, transports, tool adapter, permission classification, config
+  skills/         skill selection and validation
   services/       one interface per backend service (swapped for fakes in tests)
   state/          Zustand stores
   lib/ipc/        the only code that calls Tauri
 src-tauri/src/
   commands/       IPC handlers: app, chat, conversations, project, settings,
-                  workspace, changes, process, analysis
+                  workspace, changes, process, analysis, mcp, skills, tools
   workspace/ changes.rs process/ permissions.rs deps.rs analyzer.rs git.rs db/ ollama/
+  mcp/ skills.rs tool_settings.rs
+src-tauri/skills/ built-in skills (compiled in, installed to the data folder on first run)
 ```
 
 ### New dependencies in Phase 2
@@ -198,10 +325,23 @@ src-tauri/src/
 - **Rust:** `ignore`, `globset`, `regex`, `similar`, `sha2`, `dunce`, `which`, and
   `tauri-plugin-clipboard-manager`.
 
+### Dependencies in Phase 3
+
+None. The agent engine uses only what Phases 1 and 2 already brought in.
+
+### New dependencies in Phase 4
+
+- **Frontend:** `@modelcontextprotocol/sdk` 1.32.1 (the official MCP TypeScript SDK) and `ajv`
+  8.20.0 (JSON Schema validation of tool inputs, drafts 2020-12 and 07).
+- **Rust:** `windows-sys` 0.61 (Credential Manager and job objects; already in the dependency tree
+  through Tauri).
+
 ### Data locations
 
 - Database: `%APPDATA%\ai.vinnie.desktop\vinnie.db` (conversations, settings, change snapshots,
-  allowed commands, project metadata)
+  allowed commands, project metadata, MCP server configs without secrets, tool settings)
+- Skills: `%APPDATA%\ai.vinnie.desktop\skills\<id>\` (`skill.json`, `instructions.md`, `references\`)
+- MCP secrets: Windows Credential Manager, entries named `Vinnie/mcp/<server>/<key>`
 - Logs: `%LOCALAPPDATA%\ai.vinnie.desktop\logs\vinnie.log`
 
 ## Keyboard shortcuts
@@ -224,22 +364,43 @@ src-tauri/src/
   editor opens files up to 2 MB.
 - The editor checks for external changes every 3 seconds and when the window gains focus. There is no
   file watcher yet.
-- Small local models vary in how reliably they call tools. `qwen3:8b` worked well in testing;
-  `qwen2.5-coder:7b` sometimes formats calls as text, which Vinnie recovers when the whole reply is a
-  call.
+- Small local models vary in how reliably they call tools and finish multi-step tasks. `qwen3:8b` is
+  the most reliable model tested. `qwen2.5-coder:7b` often writes tool calls as text: Vinnie recovers
+  a reply made only of calls, and otherwise tells the model they did not run. It may still stop
+  early, and the task report then says that nothing changed.
+- Verification runs the project's own scripts. It cannot test behavior that has no script (for
+  example, a FiveM resource in-game), and it says so.
+- Pause takes effect between steps. A command or model reply that is already running finishes first
+  (Stop interrupts it).
+- `ollama serve` started from a `pnpm tauri dev` session exits when the dev app restarts. In the
+  installed app it keeps running after Vinnie closes.
 - Project detection relies on file names and manifests. It describes evidence; it does not fully
   understand the project.
 - Change history is a local snapshot store. Git-backed history is not implemented yet.
+- MCP: tools, the protocol's main feature, are supported. MCP resources, prompts, sampling,
+  elicitation, and OAuth sign-in are not yet (use a token in a secret header instead).
+- At most 8 external tools are offered per request, chosen by relevance. A tool whose name and
+  description share no words with your request isn't offered; mention the server (e.g. "on
+  GitHub") to bring its tools in.
+- Tool categories are inferred from tool names. Unknown names count as external actions, which
+  is safe but may ask more often than needed; set a tool's policy to *allow* if you trust it.
+- Ollama scans your GPU once when it starts. On systems where Windows Terminal is the default
+  console, that scan briefly opens terminal windows; Ollama's own tray app does the same. Starting
+  Ollama from Vinnie no longer opens windows for every model load (Phase 4 fix).
 
-## Recommended Phase 3 plan
+## Recommended Phase 5 plan (ice dragon viewer)
 
-1. **Task model**: explicit tasks with goals, a visible step-by-step plan, a status for each step, and
-   cancellation. Reuse the existing `taskId` that already groups changes.
-2. **Planner/executor loop** with budgets (steps, time, tokens), retries, and a checkpoint before
-   destructive steps. Keep the permission checks in the backend unchanged.
-3. **Verification steps**: after edits, run the project's detected test and build commands and feed
-   failures (with diagnoses) back into the plan.
-4. **Better retrieval**: an incremental index (symbols and chunks) so context selection goes beyond
-   file names.
-5. **Git integration** for the change manager (stash/branch per task, diff against HEAD).
-6. **Per-project permission profiles** and an audit log view.
+1. **Event contract first**: freeze the dragon state machine on the existing event buses
+   (`agent.*`, `mcp.*`, `skill.*`, and the dragon states idle, thinking, reading, editing,
+   running, waiting, working, error, success) and add a small replay log, so animations can be
+   built and tested without a model.
+2. **Renderer**: a lazily loaded Three.js (or Babylon.js) canvas in its own panel, with a glTF ice
+   dragon model, a fixed animation budget, and `prefers-reduced-motion` support. It must not slow
+   down chat or the agent loop; pause it when hidden.
+3. **State-to-animation mapping**: idle breathing; thinking glow; reading (eyes scanning); editing
+   (frost forming); running commands (wing beats); waiting for approval (looking at the user);
+   errors and success with short one-shot animations, debounced so rapid events don't flicker.
+4. **Integration cues**: subtle effects for MCP connections and skill activations, driven only by
+   real events and never invented ones.
+5. **Settings and tests**: on/off, quality level, and size; visual regression snapshots of each
+   state; a performance test that keeps frame time and CPU use bounded during long agent tasks.
