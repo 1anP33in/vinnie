@@ -38,7 +38,11 @@ import {
 } from "@/services";
 import { DEFAULT_SETTINGS } from "@/settings/validation";
 import { permissionManager } from "@/agent/runtime/permissionManager";
+import { resetMcpManager } from "@/state/mcpStore";
+import { clearSkillCache, useSkillStore } from "@/state/skillStore";
+import { useToolSettingsStore } from "@/state/toolSettingsStore";
 import { useActivityStore } from "@/state/activityStore";
+import { createFakeDialogs, createFakeMcpService, createFakeSkills, createFakeToolSettings } from "./integrationFakes";
 import { useAgentStore } from "@/state/agentStore";
 import { useApprovalStore } from "@/state/approvalStore";
 import { useChangesStore } from "@/state/changesStore";
@@ -69,6 +73,8 @@ const initialStates = [
   [useTerminalStore, useTerminalStore.getState()],
   [useWorkspaceStore, useWorkspaceStore.getState()],
   [useAgentStore, useAgentStore.getState()],
+  [useSkillStore, useSkillStore.getState()],
+  [useToolSettingsStore, useToolSettingsStore.getState()],
 ] as const;
 
 export function resetStores() {
@@ -76,6 +82,8 @@ export function resetStores() {
     (store as { setState(s: unknown, replace: true): void }).setState(state, true);
   }
   permissionManager.clearSession();
+  resetMcpManager();
+  clearSkillCache();
 }
 
 /** A scripted generation that tests drive step by step. */
@@ -563,6 +571,10 @@ export function installFakes(overrides: Partial<Services> = {}) {
   const ws = createFakeWorkspace({ "README.md": "# Demo\n" });
   const process = createFakeProcess();
   const analysis = createFakeAnalysis();
+  const mcp = createFakeMcpService();
+  const toolSettings = createFakeToolSettings();
+  const skills = createFakeSkills();
+  const dialogs = createFakeDialogs();
   let stored: Settings = { ...DEFAULT_SETTINGS };
   const settings = {
     load: async () => stored,
@@ -608,6 +620,10 @@ export function installFakes(overrides: Partial<Services> = {}) {
     changes: ws.changeService,
     process: process.service,
     analysis: analysis.service,
+    mcp: mcp.service,
+    toolSettings: toolSettings.service,
+    skills: skills.service,
+    dialogs: dialogs.service,
     ...overrides,
   });
   return {
@@ -621,6 +637,10 @@ export function installFakes(overrides: Partial<Services> = {}) {
     ws,
     process,
     analysis,
+    mcp,
+    toolSettings,
+    skills,
+    dialogs,
     getStoredSettings: () => stored,
   };
 }

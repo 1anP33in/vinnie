@@ -34,7 +34,12 @@ export interface ToolSelectionContext {
   maxExternal?: number;
   /** A skill with reference files is active (offers read_skill_reference). */
   skillReferences?: boolean;
+  /** A project folder is open. Without one only agent tools and MCP tools are offered. */
+  workspace?: boolean;
 }
+
+/** Native tools that don't touch the project folder. */
+const PROJECTLESS = new Set(["update_plan", "remember", "read_skill_reference"]);
 
 function stem(w: string): string {
   if (w.endsWith("ies") && w.length > 4) return `${w.slice(0, -3)}y`;
@@ -81,6 +86,7 @@ export function selectTools(defs: readonly ToolDefinition[], mode: AgentMode, in
   const native = usable
     .filter((d) => d.category !== "EXTERNAL")
     .filter((d) => d.name !== "read_skill_reference" || ctx.skillReferences === true)
+    .filter((d) => ctx.workspace !== false || PROJECTLESS.has(d.name))
     .filter((d) => {
       if (mode === "ask") return READ_ONLY.has(d.category);
       if (intent === "question") return READ_ONLY.has(d.category) || d.category === "EXECUTE";

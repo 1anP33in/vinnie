@@ -1,3 +1,6 @@
+import { McpView } from "@/components/integrations/McpView";
+import { SkillsView } from "@/components/integrations/SkillsView";
+import { ToolsView } from "@/components/integrations/ToolsView";
 import { useEffect } from "react";
 import { Panel, PanelGroup } from "react-resizable-panels";
 import { bootstrap } from "@/app/bootstrap";
@@ -58,7 +61,17 @@ export default function App() {
         <Panel id="main" order={2} minSize={40}>
           <main className="flex h-full min-w-0 flex-col">
             <Toolbar />
-            {view === "settings" ? <SettingsView /> : <Workbench />}
+            {view === "settings" ? (
+              <SettingsView />
+            ) : view === "mcp" ? (
+              <McpView />
+            ) : view === "skills" ? (
+              <SkillsView />
+            ) : view === "tools" ? (
+              <ToolsView />
+            ) : (
+              <Workbench />
+            )}
             <StatusBar />
           </main>
         </Panel>

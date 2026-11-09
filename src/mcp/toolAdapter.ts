@@ -9,6 +9,7 @@
 // - results are size-limited and labeled as untrusted external data.
 
 import { Ajv, type ValidateFunction } from "ajv";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 import type { ToolPolicy } from "@/lib/ipc/types";
 import { toolFailure, toolSuccess, type ToolResult, type VinnieTool } from "@/agent/types";
@@ -58,7 +59,7 @@ export interface RejectedTool {
 export function sanitizeText(text: string, max: number): string {
   const cleaned = text
     // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F​-‏‪-‮⁠-⁤﻿]/g, "")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g, "")
     .replace(/\s+/g, " ")
     .trim();
   return cleaned.length > max ? `${cleaned.slice(0, max)}…` : cleaned;
@@ -90,7 +91,7 @@ function sanitizeSchema(value: unknown, depth = 0): unknown {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
       if ((k === "description" || k === "title") && typeof v === "string") out[k] = sanitizeText(v, MAX_SCHEMA_TEXT);
-      else if (k === "examples" || k === "$comment") continue;
+      else if (k === "examples" || k === "$comment" || k === "$schema") continue;
       else out[k] = sanitizeSchema(v, depth + 1);
     }
     return out;
@@ -108,17 +109,30 @@ function compactSchema(schema: Record<string, unknown>): Record<string, unknown>
   };
 }
 
-const ajv = new Ajv({ strict: false, allErrors: true, validateFormats: false });
+// MCP allows any JSON Schema draft; current servers mostly declare 2020-12,
+// older ones draft-07. Pick the engine by the declared draft (2020-12 when
+// none is declared) and fall back to the other one.
+const ajvOptions = { strict: false, allErrors: true, validateFormats: false } as const;
+const ajv2020 = new Ajv2020(ajvOptions);
+const ajv07 = new Ajv(ajvOptions);
 const validators = new Map<string, ValidateFunction>();
 
 function compile(key: string, schema: Record<string, unknown>): ValidateFunction | string {
-  try {
-    const fn = ajv.compile(schema);
-    validators.set(key, fn);
-    return fn;
-  } catch (err) {
-    return err instanceof Error ? err.message : "The input schema could not be compiled.";
+  const declared = typeof schema.$schema === "string" ? schema.$schema : "";
+  // The meta-schema reference is only a draft marker; compile without it.
+  const { $schema: _draft, ...body } = schema;
+  const engines = /draft-0[4-7]/.test(declared) ? [ajv07, ajv2020] : [ajv2020, ajv07];
+  let error = "The input schema could not be compiled.";
+  for (const engine of engines) {
+    try {
+      const fn = engine.compile(body);
+      validators.set(key, fn);
+      return fn;
+    } catch (err) {
+      if (engine === engines[0] && err instanceof Error) error = err.message;
+    }
   }
+  return error;
 }
 
 /**

@@ -5,6 +5,7 @@ import { useChatStore } from "@/state/chatStore";
 import { useConnectionStore } from "@/state/connectionStore";
 import { useConversationStore } from "@/state/conversationStore";
 import { useUiStore } from "@/state/uiStore";
+import { SkillPicker } from "./SkillPicker";
 
 const MAX_HEIGHT_PX = 240;
 
@@ -98,6 +99,7 @@ export function Composer() {
             rows={1}
             className="max-h-60 min-h-[36px] flex-1 resize-none bg-transparent px-2 py-2 leading-relaxed text-text outline-none placeholder:text-faint focus-visible:outline-none"
           />
+          <SkillPicker />
           {busy && generation?.taskId && generation.phase !== "stopping" && (
             <button
               type="button"

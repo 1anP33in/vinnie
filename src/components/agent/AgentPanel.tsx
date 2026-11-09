@@ -239,6 +239,16 @@ export function AgentPanel() {
         <div className="mt-2">
           <Stats task={task} />
         </div>
+        {task.skills?.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]" data-testid="agent-skills">
+            <span className="text-faint">Skills:</span>
+            {task.skills.map((s) => (
+              <span key={s.id} className="rounded-full bg-accent-soft px-2 py-0.5 text-accent" title={s.reasons.join(", ")}>
+                {s.name}
+              </span>
+            ))}
+          </div>
+        )}
         {task.plan && task.plan.steps.length > 0 && (
           <div className="mt-2.5">
             <PlanView plan={task.plan} editable={running} />

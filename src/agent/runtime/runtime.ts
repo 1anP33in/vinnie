@@ -132,7 +132,12 @@ export class AgentRuntime {
   ) {
     this.now = deps.now ?? (() => Date.now());
     this.sleep = deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
-    this.toolsOn = input.toolsEnabled && input.workspaceRoot !== null && deps.registry.list().length > 0;
+    // Project tools need a project folder; MCP tools work without one.
+    const defs = deps.registry.list();
+    this.toolsOn =
+      input.toolsEnabled &&
+      defs.length > 0 &&
+      (input.workspaceRoot !== null || defs.some((d) => d.source === "mcp" && d.enabled && d.available));
     this.task = {
       id: crypto.randomUUID(),
       conversationId: input.conversationId,
@@ -252,6 +257,7 @@ export class AgentRuntime {
               request: this.input.request,
               hints: this.input.skills.flatMap((s) => s.tools),
               skillReferences: this.input.skills.some((s) => s.references.length > 0),
+              workspace: this.input.workspaceRoot !== null,
             })
           : [];
         this.offeredExternal = toolNames.some((n) => this.deps.registry.get(n)?.source === "mcp");

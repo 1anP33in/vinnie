@@ -280,6 +280,9 @@ export class McpManager {
       };
       client.onclose = () => {
         if (rt.generation !== generation) return;
+        // A failure while connecting is reported by connect() itself; only a
+        // drop after a successful connection triggers reconnection.
+        if (rt.state.status === "connecting") return;
         this.onConnectionClosed(rt);
       };
       rt.client = client;

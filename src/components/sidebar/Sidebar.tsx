@@ -1,4 +1,7 @@
 import {
+  BookOpen,
+  Plug,
+  Wrench,
   FolderTree,
   GitCompareArrows,
   MessagesSquare,
@@ -16,7 +19,7 @@ import { ExplorerPanel } from "@/components/explorer/ExplorerPanel";
 import { SearchPanel } from "@/components/search/SearchPanel";
 import { useConversationStore } from "@/state/conversationStore";
 import { useSettingsStore } from "@/state/settingsStore";
-import { useUiStore, type SideView } from "@/state/uiStore";
+import { useUiStore, type SideView, type View } from "@/state/uiStore";
 import { ConversationList } from "./ConversationList";
 import { ProjectSelector } from "./ProjectSelector";
 
@@ -27,6 +30,13 @@ const VIEWS: { view: SideView; label: string; icon: typeof FolderTree; shortcut:
   { view: "explorer", label: "Explorer", icon: FolderTree, shortcut: "Ctrl+Shift+E" },
   { view: "search", label: "Search", icon: Search, shortcut: "Ctrl+Shift+F" },
   { view: "changes", label: "Changes", icon: GitCompareArrows, shortcut: "" },
+];
+
+/** Full-page integration screens. */
+const INTEGRATIONS: { view: View; label: string; icon: typeof FolderTree }[] = [
+  { view: "mcp", label: "MCP servers", icon: Plug },
+  { view: "skills", label: "Skills", icon: BookOpen },
+  { view: "tools", label: "Tools", icon: Wrench },
 ];
 
 function ConversationSearch() {
@@ -124,6 +134,12 @@ export function ActivityRail() {
           onClick={() => select(v)}
           className="size-9"
         >
+          <Icon size={18} />
+        </IconButton>
+      ))}
+      <div className="my-1 h-px w-6 bg-border" aria-hidden="true" />
+      {INTEGRATIONS.map(({ view: v, label, icon: Icon }) => (
+        <IconButton key={v} label={label} active={view === v} onClick={() => setView(view === v ? "chat" : v)} className="size-9">
           <Icon size={18} />
         </IconButton>
       ))}

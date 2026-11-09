@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type View = "chat" | "settings";
+export type View = "chat" | "settings" | "mcp" | "skills" | "tools";
 export type SideView = "explorer" | "search" | "changes" | "chats";
 export type BottomTab = "terminal" | "activity" | "task";
 
