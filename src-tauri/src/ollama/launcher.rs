@@ -68,13 +68,15 @@ pub fn spawn_serve(executable: &Path, bind: &str) -> AppResult<()> {
         let _ = flags;
         cmd
     };
+    // A hidden console, not DETACHED_PROCESS: Ollama starts console helpers
+    // (llama-server, gpu-discover) for every model load. Without a console to
+    // inherit, Windows opens a visible terminal window for each of them.
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    const DETACHED_PROCESS: u32 = 0x0000_0008;
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
     // Leave Vinnie's job object (if any) so the server keeps running after
     // Vinnie closes, like starting it by hand. Not every job allows that.
     const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
-    let base = CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
+    let base = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP;
     build(base | CREATE_BREAKAWAY_FROM_JOB)
         .spawn()
         .or_else(|_| build(base).spawn())
