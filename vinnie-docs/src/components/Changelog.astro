@@ -1,0 +1,33 @@
+---
+// Full changelog, rendered from src/data/changelog.ts.
+import { CHANGELOG } from "../data/changelog";
+
+const base = import.meta.env.BASE_URL;
+---
+
+{
+  CHANGELOG.map((e) => (
+    <section class="entry">
+      <h2 id={e.date + "-" + e.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}>{e.title}</h2>
+      <p class="meta">
+        <time datetime={e.date}>{e.date}</time> · version {e.version}
+      </p>
+      <p>{e.summary}</p>
+      <ul>
+        {e.highlights.map((h) => (
+          <li>{h}</li>
+        ))}
+      </ul>
+      <p>
+        <a href={`${base}${e.href}`}>Read the documentation →</a>
+      </p>
+    </section>
+  ))
+}
+
+<style>
+  .meta {
+    color: var(--sl-color-gray-3);
+    font-size: var(--sl-text-sm);
+  }
+</style>

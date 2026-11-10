@@ -1,0 +1,44 @@
+---
+// Starlight's theme provider with one change: on a visitor's first visit the
+// site starts in the dark theme (Vinnie's own default) instead of following
+// the operating system. After that, the visitor's choice in the theme menu
+// (Dark, Light, or Auto) is respected as usual.
+import { Icon } from "@astrojs/starlight/components";
+---
+
+{/* Inlined to avoid a flash of the wrong theme. */}
+<script is:inline>
+  window.StarlightThemeProvider = (() => {
+    try {
+      if (!localStorage.getItem("vinnie-theme-initialized")) {
+        localStorage.setItem("vinnie-theme-initialized", "1");
+        if (!localStorage.getItem("starlight-theme")) localStorage.setItem("starlight-theme", "dark");
+      }
+    } catch {
+      /* storage unavailable: fall through to the default below */
+    }
+    const storedTheme = typeof localStorage !== "undefined" && localStorage.getItem("starlight-theme");
+    const theme = storedTheme || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+    document.documentElement.dataset.theme = theme === "light" ? "light" : "dark";
+    return {
+      updatePickers(theme = storedTheme || "auto") {
+        document.querySelectorAll("starlight-theme-select").forEach((picker) => {
+          const select = picker.querySelector("select");
+          if (select) select.value = theme;
+          const tmpl = document.querySelector(`#theme-icons`);
+          const newIcon = tmpl && tmpl.content.querySelector("." + theme);
+          if (newIcon) {
+            const oldIcon = picker.querySelector("svg.label-icon");
+            if (oldIcon) oldIcon.replaceChildren(...newIcon.cloneNode(true).childNodes);
+          }
+        });
+      },
+    };
+  })();
+</script>
+
+<template id="theme-icons">
+  <Icon name="sun" class="light" />
+  <Icon name="moon" class="dark" />
+  <Icon name="laptop" class="auto" />
+</template>
