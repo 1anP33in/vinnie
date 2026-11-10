@@ -1,0 +1,64 @@
+---
+title: "Adding MCP Servers"
+description: "Add a local or remote MCP server step by step."
+sidebar:
+  order: 3
+---
+import { Steps } from "@astrojs/starlight/components";
+
+Open the **MCP servers** screen (plug icon on the left rail) and click **Add MCP server**.
+
+<Steps>
+
+1. **Name**: a display name, for example `GitHub`.
+
+2. **ID (tool prefix)**: filled in from the name; for example `github`. The tools appear to the model as
+   `github__<tool>` and to you as `github.<tool>`. IDs use lowercase letters, digits, and single underscores,
+   start with a letter, and have at most 24 characters. They can't be changed later.
+
+3. **Transport**:
+   - **Local process (stdio)**: enter the **Command** and **Arguments**. See [STDIO connections](/mcp/stdio-connections/).
+   - **Remote (Streamable HTTP)**: enter the **URL**. See [HTTP connections](/mcp/http-connections/).
+
+4. **Secrets** *(optional)*: add environment variables (stdio) or headers (HTTP) whose values must stay secret,
+   such as an API token. They're stored in Windows Credential Manager.
+
+5. **Tool timeout** (default 60 seconds) and **Default approval** for the server's tools (default
+   *Ask every time*).
+
+6. **Enabled** and **Connect when Vinnie starts** are on by default.
+
+7. Click **Add server**. Vinnie saves the configuration and connects. The status changes to **CONNECTING** and then
+   **CONNECTED**, with the discovered tools listed below.
+
+</Steps>
+
+## Example: the official filesystem server
+
+Give Vinnie read access to a documentation folder with the reference filesystem server. Node.js must be
+installed, because `npx` downloads and runs the package.
+
+| Field | Value |
+| --- | --- |
+| Name | `Docs` |
+| Transport | Local process (stdio) |
+| Command | `npx` |
+| Arguments (one per line) | `-y`<br />`@modelcontextprotocol/server-filesystem`<br />`C:\Docs` |
+
+The server only allows access to the folders passed as arguments. Its write tools (`write_file`, `edit_file`,
+`move_file`) can overwrite files, so Vinnie classifies them as destructive and always asks.
+
+## Example: a remote server with a token
+
+| Field | Value |
+| --- | --- |
+| Name | `Tracker` |
+| Transport | Remote (Streamable HTTP) |
+| URL | `https://mcp.example.com/mcp` |
+| Secret | type `header`, name `Authorization`, value `Bearer <your token>` |
+
+## If it doesn't connect
+
+The server shows **ERROR** with a message, and its **Logs** show details such as the process output or the HTTP
+status. A server that rejects the credentials shows *"The server rejected the credentials (401)…"*. See
+[Troubleshooting MCP](/mcp/troubleshooting-mcp/).

@@ -1,0 +1,34 @@
+---
+// Site title with the documented Vinnie version next to it.
+import Default from "@astrojs/starlight/components/SiteTitle.astro";
+import { VINNIE_VERSION } from "../../data/version";
+---
+
+<div class="vinnie-site-title">
+  <Default />
+  <span class="vinnie-version" title={`These docs describe Vinnie ${VINNIE_VERSION}`}>v{VINNIE_VERSION}</span>
+</div>
+
+<style>
+  .vinnie-site-title {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-width: 0;
+  }
+  .vinnie-version {
+    flex-shrink: 0;
+    padding: 0.05rem 0.45rem;
+    border: 1px solid var(--sl-color-accent);
+    border-radius: 999px;
+    font-family: var(--sl-font-mono);
+    font-size: 0.7rem;
+    color: var(--sl-color-accent-high);
+    white-space: nowrap;
+  }
+  @media (max-width: 30rem) {
+    .vinnie-version {
+      display: none;
+    }
+  }
+</style>

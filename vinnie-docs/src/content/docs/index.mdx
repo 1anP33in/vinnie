@@ -1,0 +1,113 @@
+---
+title: Vinnie AI
+description: Vinnie is a local-first AI developer agent for Windows. It works in your projects with models running on your own computer through Ollama.
+template: splash
+hero:
+  title: VINNIE AI
+  tagline: Your local AI developer agent.
+  image:
+    file: ../../assets/vinnie-mark.svg
+    alt: Vinnie's ice dragon mark
+  actions:
+    - text: Get started
+      link: /getting-started/introduction/
+      icon: right-arrow
+    - text: Installation
+      link: /getting-started/installation/
+      variant: secondary
+      icon: download
+    - text: GitHub
+      link: https://github.com/1anP33in/vinnie
+      variant: minimal
+      icon: external
+      attrs:
+        rel: noopener
+---
+
+import { Card, CardGrid, LinkCard, Steps } from "@astrojs/starlight/components";
+import SearchLauncher from "../../components/home/SearchLauncher.astro";
+import ArchitectureFlow from "../../components/home/ArchitectureFlow.astro";
+import LatestUpdates from "../../components/home/LatestUpdates.astro";
+
+<p class="vinnie-lede">
+  Vinnie is an autonomous development assistant for Windows. It reads, searches, and edits your project, runs your
+  build and test commands, and checks its own work, using models that run on your computer through Ollama. Every
+  change is shown as a diff, needs your permission, and can be reverted.
+</p>
+
+<SearchLauncher />
+
+## What Vinnie does
+
+<CardGrid>
+  <Card title="Autonomous development" icon="rocket">
+    In Agent mode Vinnie plans multi-step tasks, works through them with tools, and reports what really happened.
+    [How the agent works](/agent-system/how-the-agent-works/)
+  </Card>
+  <Card title="Local AI through Ollama" icon="laptop">
+    Chat and agent work run on local models. Your code is never sent to a cloud AI service.
+    [Connect Ollama](/ollama/connecting-ollama/)
+  </Card>
+  <Card title="MCP integrations" icon="puzzle">
+    Connect Model Context Protocol servers, such as a filesystem or GitHub server, to give Vinnie new tools.
+    [MCP integration](/mcp/introduction/)
+  </Card>
+  <Card title="Custom skills" icon="open-book">
+    Reusable instructions for kinds of work. Ten are built in, and you can write your own.
+    [Skills](/skills/introduction/)
+  </Card>
+  <Card title="Project-aware assistance" icon="seti:folder">
+    Vinnie detects your project type, languages, package managers, and FiveM manifests, and uses them.
+    [Project workspaces](/user-guide/project-workspaces/)
+  </Card>
+  <Card title="Permission-controlled execution" icon="approve-check">
+    Reads, writes, commands, and installs follow your permission settings, enforced in the backend, not by the model.
+    [Permissions and approvals](/user-guide/permissions-and-approvals/)
+  </Card>
+  <Card title="Code verification" icon="approve-check-circle">
+    After changing code, Vinnie runs your project's own typecheck, lint, test, or build scripts.
+    [Verification system](/agent-system/verification-system/)
+  </Card>
+  <Card title="Ice dragon companion" icon="star">
+    A status indicator that reflects real agent activity today; an animated 3D dragon is planned.
+    [Ice dragon companion](/dragon/introduction/)
+  </Card>
+</CardGrid>
+
+## Quick start
+
+<Steps>
+
+1. **Install Ollama** from [ollama.com/download](https://ollama.com/download) and pull a model that supports tools:
+
+   ```powershell
+   ollama pull qwen3:8b
+   ```
+
+2. **Install Vinnie.** Run `Vinnie_0.1.0_x64-setup.exe` (or build it from source). See [Installation](/getting-started/installation/).
+
+3. **Start Vinnie.** If Ollama isn't running, click **Launch Ollama** on the welcome screen. Pick your model in the toolbar.
+
+4. **Choose a project folder** in the sidebar (**Project → Choose folder…**).
+
+5. **Ask for something**, for example *"Run the tests and explain any failures."* Review the plan and approve the changes you want.
+   See [Your first agent task](/getting-started/your-first-agent-task/).
+
+</Steps>
+
+## How Vinnie works
+
+<ArchitectureFlow />
+
+## Latest updates
+
+<LatestUpdates />
+
+## Popular pages
+
+<CardGrid>
+  <LinkCard title="System requirements" href="/getting-started/system-requirements/" description="What you need to run Vinnie." />
+  <LinkCard title="Agent modes" href="/user-guide/agent-modes/" description="Ask, Assist, and Agent: what each one may do." />
+  <LinkCard title="Adding MCP servers" href="/mcp/adding-mcp-servers/" description="Connect local and remote MCP servers." />
+  <LinkCard title="Troubleshooting Ollama" href="/troubleshooting/ollama-connection-errors/" description="Fix connection and model problems." />
+</CardGrid>

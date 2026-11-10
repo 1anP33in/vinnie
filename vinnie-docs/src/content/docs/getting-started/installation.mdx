@@ -1,0 +1,80 @@
+---
+title: "Installation"
+description: "Install Vinnie on Windows."
+sidebar:
+  order: 5
+---
+import { Steps } from "@astrojs/starlight/components";
+
+:::note[No prebuilt downloads yet]
+Vinnie doesn't publish prebuilt installers (GitHub Releases) yet. To get the installer, build it from
+source; it takes a few minutes. When releases are published, this page will link to them.
+:::
+
+## 1. Install Ollama
+
+Download and install Ollama from [ollama.com/download](https://ollama.com/download). Then pull a model with
+tool support:
+
+```powershell
+ollama pull qwen3:8b
+```
+
+See [Ollama installation](/ollama/ollama-installation/) for details.
+
+## 2. Build the installer
+
+<Steps>
+
+1. Install the [build prerequisites](/getting-started/system-requirements/#to-build-vinnie-from-source).
+
+2. Get the source code:
+
+   ```powershell
+   git clone https://github.com/1anP33in/vinnie.git
+   cd vinnie
+   ```
+
+3. Install the JavaScript dependencies:
+
+   ```powershell
+   corepack enable pnpm
+   pnpm install
+   ```
+
+4. Build the release and installer:
+
+   ```powershell
+   pnpm app:build
+   ```
+
+   The installer is written to
+   `src-tauri\target\release\bundle\nsis\Vinnie_0.1.0_x64-setup.exe`.
+
+</Steps>
+
+## 3. Run the installer
+
+Double-click `Vinnie_0.1.0_x64-setup.exe`. Vinnie installs **for your user account only** (no administrator
+rights needed) into `%LOCALAPPDATA%\Vinnie` and adds shortcuts to the Start menu and the desktop.
+
+To install without the setup wizard, run it with the standard silent flag:
+
+```powershell
+.\Vinnie_0.1.0_x64-setup.exe /S
+```
+
+## Where Vinnie keeps your data
+
+| What | Where |
+| --- | --- |
+| Database (conversations, settings, change history, MCP server settings) | `%APPDATA%\ai.vinnie.desktop\vinnie.db` |
+| Skills | `%APPDATA%\ai.vinnie.desktop\skills\` |
+| Logs | `%LOCALAPPDATA%\ai.vinnie.desktop\logs\vinnie.log` |
+| MCP secrets | Windows Credential Manager, entries named `Vinnie/mcp/<server>/<key>` |
+
+Uninstalling Vinnie (Windows **Settings → Apps**) removes the program but leaves this data in place.
+
+## Next step
+
+Continue with [First-time setup](/getting-started/first-time-setup/).

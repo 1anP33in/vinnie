@@ -1,0 +1,168 @@
+/* Vinnie documentation theme: charcoal surfaces, icy cyan accents, subtle frost glow.
+   Colors are chosen for WCAG AA contrast on both themes. */
+
+:root {
+  --sl-font: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --sl-font-mono: "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  --vinnie-ice: #7dd3fc;
+  --vinnie-cyan: #22d3ee;
+  --vinnie-frost: #e0f7ff;
+  --vinnie-glow: 0 0 0 1px rgb(125 211 252 / 0.18), 0 0 24px -6px rgb(34 211 238 / 0.35);
+}
+
+/* Dark (default) */
+:root,
+::backdrop {
+  --sl-color-accent-low: #0b2e3a;
+  --sl-color-accent: #22b8d6;
+  --sl-color-accent-high: #a5ecff;
+  --sl-color-white: #f2f7fa;
+  --sl-color-gray-1: #dbe4ea;
+  --sl-color-gray-2: #b7c3cc;
+  --sl-color-gray-3: #8b99a5;
+  --sl-color-gray-4: #56626c;
+  --sl-color-gray-5: #2c343b;
+  --sl-color-gray-6: #171c21;
+  --sl-color-black: #0b0e11;
+  --sl-color-bg-nav: #0e1216;
+  --sl-color-bg-sidebar: #0e1216;
+  --sl-color-hairline: #1f262c;
+  --sl-color-hairline-light: #2a333a;
+}
+
+/* Light (optional; Vinnie defaults to dark) */
+:root[data-theme="light"],
+[data-theme="light"] ::backdrop {
+  --sl-color-accent-low: #d7f5fd;
+  --sl-color-accent: #0778a0;
+  --sl-color-accent-high: #064b63;
+  --sl-color-white: #0b1218;
+  --sl-color-gray-1: #1a242c;
+  --sl-color-gray-2: #33414c;
+  --sl-color-gray-3: #52616d;
+  --sl-color-gray-4: #8a98a3;
+  --sl-color-gray-5: #c9d3da;
+  --sl-color-gray-6: #eef3f6;
+  --sl-color-gray-7: #f6f9fb;
+  --sl-color-black: #ffffff;
+  --sl-color-bg-nav: #f6f9fb;
+  --sl-color-bg-sidebar: #f6f9fb;
+}
+
+/* Subtle frost along the top of the page (dark only). */
+:root[data-theme="dark"] body {
+  background:
+    radial-gradient(1200px 380px at 70% -120px, rgb(34 211 238 / 0.07), transparent 70%),
+    var(--sl-color-black);
+}
+
+.header {
+  border-bottom-color: var(--sl-color-hairline);
+  backdrop-filter: saturate(140%) blur(6px);
+}
+
+.site-title img {
+  filter: drop-shadow(0 0 6px rgb(34 211 238 / 0.35));
+}
+
+/* Headings and links */
+.sl-markdown-content h2 {
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--sl-color-hairline);
+}
+.sl-markdown-content a:not(.card a, .sl-link-button) {
+  text-underline-offset: 0.2em;
+  text-decoration-color: rgb(125 211 252 / 0.45);
+}
+
+/* Inline code */
+.sl-markdown-content :not(pre) > code {
+  border: 1px solid var(--sl-color-hairline-light);
+  background: var(--sl-color-gray-6);
+  border-radius: 0.3rem;
+  padding: 0.05rem 0.3rem;
+}
+
+/* Cards and link cards get a faint ice edge on hover. */
+.card,
+.sl-link-card {
+  border-color: var(--sl-color-hairline-light);
+  background: color-mix(in srgb, var(--sl-color-gray-6) 70%, transparent);
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+.sl-link-card:hover {
+  border-color: var(--sl-color-accent);
+  box-shadow: var(--vinnie-glow);
+}
+
+/* Tables scroll inside themselves on narrow screens (no page-level horizontal scroll). */
+.sl-markdown-content table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* Keyboard keys */
+.sl-markdown-content kbd {
+  font-family: var(--sl-font-mono);
+  font-size: 0.8em;
+  padding: 0.1rem 0.35rem;
+  border: 1px solid var(--sl-color-gray-4);
+  border-bottom-width: 2px;
+  border-radius: 0.3rem;
+  background: var(--sl-color-gray-6);
+}
+
+/* Status badges used in the docs: "Planned", "Implemented". */
+.sl-badge {
+  font-weight: 600;
+}
+
+/* Search dialog: the dragon mark shows while results load (a quiet loading state). */
+.pagefind-ui__message {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.pagefind-ui__message::before {
+  content: "";
+  flex-shrink: 0;
+  width: 1.4rem;
+  height: 1.4rem;
+  background: url("/dragon/vinnie-mark.svg") center / contain no-repeat;
+  opacity: 0.85;
+  animation: vinnie-breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes vinnie-breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+
+/* Splash (home and 404) hero */
+.hero {
+  padding-block: 3rem 2rem;
+}
+.hero .tagline {
+  color: var(--sl-color-gray-2);
+}
+.hero img {
+  filter: drop-shadow(0 0 28px rgb(34 211 238 / 0.35));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+.vinnie-lede { max-width: 44rem; margin-inline: auto; text-align: center; color: var(--sl-color-gray-2); font-size: var(--sl-text-lg); }

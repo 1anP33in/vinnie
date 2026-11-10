@@ -1,0 +1,70 @@
+---
+// Breadcrumbs above each page title: Docs › Section › Page, derived from the
+// sidebar so they always match the navigation.
+import Default from "@astrojs/starlight/components/PageTitle.astro";
+
+type Entry = { type: "link"; label: string; href: string; isCurrent: boolean } | { type: "group"; label: string; entries: Entry[] };
+
+function trail(entries: Entry[], parents: string[] = []): { labels: string[]; current: string } | null {
+  for (const e of entries) {
+    if (e.type === "link" && e.isCurrent) return { labels: parents, current: e.label };
+    if (e.type === "group") {
+      const found = trail(e.entries, [...parents, e.label]);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+const route = Astro.locals.starlightRoute;
+const crumbs = route.entry.data.template === "splash" ? null : trail(route.sidebar as Entry[]);
+const home = import.meta.env.BASE_URL;
+---
+
+{
+  crumbs && (
+    <nav class="vinnie-breadcrumbs" aria-label="Breadcrumb">
+      <ol>
+        <li>
+          <a href={home}>Docs</a>
+        </li>
+        {crumbs.labels.map((label) => (
+          <li>{label}</li>
+        ))}
+        <li aria-current="page">{crumbs.current}</li>
+      </ol>
+    </nav>
+  )
+}
+<Default />
+
+<style>
+  .vinnie-breadcrumbs ol {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.5rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: var(--sl-text-xs);
+    color: var(--sl-color-gray-3);
+  }
+  .vinnie-breadcrumbs li {
+    margin: 0;
+  }
+  .vinnie-breadcrumbs li + li::before {
+    content: "›";
+    margin-inline-end: 0.5rem;
+    color: var(--sl-color-gray-4);
+  }
+  .vinnie-breadcrumbs a {
+    color: var(--sl-color-gray-3);
+    text-decoration: none;
+  }
+  .vinnie-breadcrumbs a:hover {
+    color: var(--sl-color-accent-high);
+  }
+  .vinnie-breadcrumbs [aria-current="page"] {
+    color: var(--sl-color-gray-2);
+  }
+</style>
