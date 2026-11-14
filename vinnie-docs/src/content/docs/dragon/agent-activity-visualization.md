@@ -1,15 +1,23 @@
 ---
 title: "Agent Activity Visualization"
-description: "How real events become dragon states."
+description: "Where the dragon's information comes from."
 sidebar:
   order: 3
 ---
-Dragon states come from two sources, both emitted only by real operations:
+The dragon has a single source of truth: the agent runtime's event stream (`agent.*` events, see
+[Agent states](/agent-system/agent-states/)). A small adapter (`src/dragon/eventAdapter.ts`) listens to those
+events. It never emits events, calls the runtime, or schedules activity of its own.
 
-| Source | Mapping |
+For each event it records:
+
+| Field | Taken from |
 | --- | --- |
-| Agent events | `agent.started`/`thinking`/`planning`/`retrying` → thinking; `agent.tool_started` → reading (read, search, project tools), editing (write, delete), running (commands, installs), or working (others); `agent.permission_requested`/`paused` → waiting; `agent.verifying` → running; failures → error; `agent.verification_passed`/`completed` → success; `agent.cancelled`/`stopped` → idle |
-| Activity feed | searches, reads, and analysis → reading; edits → editing; commands and installs → running |
+| State | The task's status in the event (for example `executing`, `waiting_for_permission`) |
+| Task | The request you sent |
+| Activity | The runtime's own label, for example *Reading src/app.ts*, *Waiting for your approval*, *Verifying changes* |
+| Tool | The tool being run or awaiting approval, and its category (reading, searching, editing, running a command, installing dependencies, external MCP tool) |
+| Recent | The last 8 events, such as *Task started*, *read_file succeeded*, *Approved*, *All 1 check passed* |
 
-Each change is a `dragon.<state>` event with a label, for example `dragon.reading` "Reading server.js". The label
-is what the status bar shows. See [Event system](/developer/event-system/).
+When a task finishes, the panel keeps a *Last task* line (for example *Last task: Completed · 2m*).
+
+If the adapter can't connect to the event stream, the panel says so. The agent itself is unaffected.

@@ -59,6 +59,8 @@ pub struct Settings {
     pub project_context_enabled: bool,
     /// Agent runtime behavior and limits.
     pub agent: AgentSettings,
+    /// Ice dragon companion viewer preferences.
+    pub dragon: DragonSettings,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -136,6 +138,109 @@ impl AgentSettings {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum DragonQuality {
+    Low,
+    #[default]
+    Medium,
+    High,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum DragonLayout {
+    /// Resizable panel beside the chat.
+    #[default]
+    Side,
+    /// Short strip above the chat.
+    Compact,
+}
+
+/// Saved camera orbit for the dragon viewer.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct DragonCamera {
+    /// Horizontal angle around the dragon, degrees (0 = facing the dragon).
+    pub azimuth_deg: i32,
+    /// Vertical angle above the floor, degrees.
+    pub elevation_deg: i32,
+    /// Distance relative to the default framing, percent.
+    pub distance_pct: u32,
+}
+
+impl Default for DragonCamera {
+    fn default() -> Self {
+        Self {
+            azimuth_deg: 28,
+            elevation_deg: 14,
+            distance_pct: 100,
+        }
+    }
+}
+
+/// Ice dragon viewer preferences. These are cosmetic, so out-of-range values
+/// are clamped instead of rejected and never block saving other settings.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct DragonSettings {
+    /// Show the 3D dragon at all. Off: only the status-bar indicator remains.
+    pub enabled: bool,
+    /// The viewer panel is open (toggled from the toolbar).
+    pub panel_open: bool,
+    pub layout: DragonLayout,
+    /// Panel size, percent of the workspace.
+    pub panel_size: u32,
+    pub quality: DragonQuality,
+    pub snow: bool,
+    pub ice_particles: bool,
+    pub fog: bool,
+    /// Glow, rim lights, reflections, and shadows.
+    pub lighting_effects: bool,
+    /// Animation speed, percent (25-200).
+    pub animation_speed: u32,
+    /// Idle behaviors (breathing, blinking, looking around) are playing.
+    pub idle_animations: bool,
+    /// The dragon glances toward the cursor while idle.
+    pub follow_cursor: bool,
+    pub camera: DragonCamera,
+}
+
+impl Default for DragonSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            panel_open: true,
+            layout: DragonLayout::Side,
+            panel_size: 30,
+            quality: DragonQuality::Medium,
+            snow: true,
+            ice_particles: true,
+            fog: true,
+            lighting_effects: true,
+            animation_speed: 100,
+            idle_animations: true,
+            follow_cursor: true,
+            camera: DragonCamera::default(),
+        }
+    }
+}
+
+impl DragonSettings {
+    pub fn normalized(&self) -> DragonSettings {
+        DragonSettings {
+            panel_size: self.panel_size.clamp(15, 60),
+            animation_speed: self.animation_speed.clamp(25, 200),
+            camera: DragonCamera {
+                azimuth_deg: self.camera.azimuth_deg.clamp(-180, 180),
+                elevation_deg: self.camera.elevation_deg.clamp(-5, 60),
+                distance_pct: self.camera.distance_pct.clamp(50, 250),
+            },
+            ..*self
+        }
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -154,6 +259,7 @@ impl Default for Settings {
             tools_enabled: true,
             project_context_enabled: true,
             agent: AgentSettings::default(),
+            dragon: DragonSettings::default(),
         }
     }
 }
@@ -245,6 +351,7 @@ impl Settings {
         Ok(Settings {
             ignored_directories,
             agent: self.agent.validated()?,
+            dragon: self.dragon.normalized(),
             ollama_endpoint: normalize_endpoint(&self.ollama_endpoint)?,
             default_model,
             ..self.clone()
@@ -358,6 +465,44 @@ mod tests {
     }
 
     #[test]
+    fn dragon_settings_default_and_clamp() {
+        // Older stored settings without a `dragon` section get defaults.
+        let parsed: Settings = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
+        assert_eq!(parsed.dragon, DragonSettings::default());
+        assert!(parsed.dragon.enabled);
+        assert_eq!(parsed.dragon.quality, DragonQuality::Medium);
+
+        let wild = Settings {
+            dragon: DragonSettings {
+                panel_size: 99,
+                animation_speed: 1,
+                camera: DragonCamera {
+                    azimuth_deg: 900,
+                    elevation_deg: -90,
+                    distance_pct: 5,
+                },
+                ..DragonSettings::default()
+            },
+            ..Settings::default()
+        };
+        let d = wild.validated().expect("dragon values are clamped, not rejected").dragon;
+        assert_eq!((d.panel_size, d.animation_speed), (60, 25));
+        assert_eq!(
+            (d.camera.azimuth_deg, d.camera.elevation_deg, d.camera.distance_pct),
+            (180, -5, 50)
+        );
+
+        // Partial dragon documents fill in the rest.
+        let partial: Settings =
+            serde_json::from_str(r#"{"dragon":{"quality":"low","camera":{"azimuthDeg":10}}}"#)
+                .unwrap();
+        assert_eq!(partial.dragon.quality, DragonQuality::Low);
+        assert_eq!(partial.dragon.camera.azimuth_deg, 10);
+        assert_eq!(partial.dragon.camera.distance_pct, 100);
+        assert!(partial.dragon.snow);
+    }
+
+    #[test]
     fn rejects_invalid_ignored_directories() {
         for bad in ["../x", "a/b", "C:", "*"] {
             let s = Settings {
@@ -411,6 +556,11 @@ mod tests {
                 mode: AgentMode::Assist,
                 context_budget: 8192,
                 ..AgentSettings::default()
+            },
+            dragon: DragonSettings {
+                quality: DragonQuality::High,
+                snow: false,
+                ..DragonSettings::default()
             },
         };
         let saved = save(&conn, &settings).unwrap();

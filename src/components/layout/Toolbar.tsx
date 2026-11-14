@@ -1,10 +1,11 @@
-import { AlertTriangle, ChevronDown, FolderOpen, RefreshCw, Settings as SettingsIcon } from "lucide-react";
+import { AlertTriangle, ChevronDown, FolderOpen, RefreshCw, Settings as SettingsIcon, Snowflake } from "lucide-react";
 import { IconButton } from "@/components/common/Button";
 import { formatBytes } from "@/lib/dates";
 import { useChatStore } from "@/state/chatStore";
 import { useConnectionStore } from "@/state/connectionStore";
 import { useConversationStore } from "@/state/conversationStore";
 import { useProjectStore } from "@/state/projectStore";
+import { useSettingsStore } from "@/state/settingsStore";
 import { useUiStore } from "@/state/uiStore";
 
 function ModelSelector() {
@@ -96,6 +97,31 @@ function ProjectChip() {
   );
 }
 
+function DragonToggle() {
+  const enabled = useSettingsStore((s) => s.settings.dragon.enabled);
+  const open = useSettingsStore((s) => s.settings.dragon.panelOpen);
+  const updateDragon = useSettingsStore((s) => s.updateDragon);
+  const view = useUiStore((s) => s.view);
+  const setView = useUiStore((s) => s.setView);
+  if (!enabled) return null;
+  return (
+    <IconButton
+      label={open ? "Hide the ice dragon" : "Show the ice dragon"}
+      active={open && view === "chat"}
+      onClick={() => {
+        if (view !== "chat") {
+          setView("chat");
+          if (!open) updateDragon({ panelOpen: true });
+        } else {
+          updateDragon({ panelOpen: !open });
+        }
+      }}
+    >
+      <Snowflake size={15} />
+    </IconButton>
+  );
+}
+
 export function Toolbar() {
   const view = useUiStore((s) => s.view);
   const setView = useUiStore((s) => s.setView);
@@ -121,6 +147,7 @@ export function Toolbar() {
       <ModelSelector />
       <div className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
       <ConnectionIndicator />
+      <DragonToggle />
       <IconButton label="Settings" active={view === "settings"} onClick={() => setView(view === "settings" ? "chat" : "settings")}>
         <SettingsIcon size={15} />
       </IconButton>

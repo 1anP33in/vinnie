@@ -1,5 +1,6 @@
 import { bridgeAgentEventsToDragon } from "@/agent/runtime/events";
 import { registerWorkspaceTools } from "@/agent/tools";
+import { connectDragonToAgent } from "@/dragon/eventAdapter";
 import { bridgeAgentEventsToActivity, bridgeIntegrationEventsToActivity } from "@/state/agentActivityBridge";
 import { getServices } from "@/services";
 import { useConnectionStore } from "@/state/connectionStore";
@@ -14,6 +15,7 @@ import { bridgeToolUsage, useToolSettingsStore } from "@/state/toolSettingsStore
 export async function bootstrap(): Promise<void> {
   registerWorkspaceTools(getServices().tools);
   bridgeAgentEventsToDragon();
+  connectDragonToAgent();
   bridgeAgentEventsToActivity();
   bridgeIntegrationEventsToActivity();
   bridgeToolUsage();

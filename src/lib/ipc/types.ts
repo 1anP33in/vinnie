@@ -119,6 +119,38 @@ export interface Settings {
   toolsEnabled: boolean;
   projectContextEnabled: boolean;
   agent: AgentSettings;
+  dragon: DragonSettings;
+}
+
+export type DragonQuality = "low" | "medium" | "high";
+export type DragonLayout = "side" | "compact";
+
+export interface DragonCamera {
+  /** Degrees around the dragon (0 = facing it). */
+  azimuthDeg: number;
+  /** Degrees above the floor. */
+  elevationDeg: number;
+  /** Distance relative to the default framing, percent. */
+  distancePct: number;
+}
+
+/** Ice dragon viewer preferences (cosmetic; the backend clamps them). */
+export interface DragonSettings {
+  enabled: boolean;
+  panelOpen: boolean;
+  layout: DragonLayout;
+  /** Panel size, percent of the workspace (15-60). */
+  panelSize: number;
+  quality: DragonQuality;
+  snow: boolean;
+  iceParticles: boolean;
+  fog: boolean;
+  lightingEffects: boolean;
+  /** Percent, 25-200. */
+  animationSpeed: number;
+  idleAnimations: boolean;
+  followCursor: boolean;
+  camera: DragonCamera;
 }
 
 export type AgentModeSetting = "ask" | "assist" | "agent";

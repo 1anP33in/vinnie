@@ -44,7 +44,13 @@ No. Vinnie's model provider is Ollama. The provider is an interface in the code,
 
 ## Where's the 3D dragon?
 
-Planned. Today the dragon is the status indicator. See [Ice dragon companion](/dragon/introduction/).
+Click the **snowflake** button in the toolbar. If it's missing, turn on **Settings → Ice dragon → Show the ice
+dragon**. See [Ice dragon companion](/dragon/introduction/).
+
+## Does the dragon slow Vinnie down?
+
+It renders at a capped frame rate, pauses when hidden, and never waits on the agent. Use **Low** graphics quality on
+slow computers. See [Performance settings](/dragon/performance-settings/).
 
 ## Where are my settings and conversations?
 

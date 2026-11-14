@@ -15,7 +15,7 @@ MCP server.
 | 2. Project intelligence and developer tools | Done | Explorer, editor, search, diffs, change history, terminal, dependency management, tool use |
 | 3. Autonomous agent engine | Done | Agent loop, plans, scoped permissions, recovery, verification, task timeline |
 | 4. MCP and skills | Done | MCP servers (stdio and Streamable HTTP), tool permissions, skills, Tool Explorer |
-| 5. Ice dragon viewer | Planned | Animated 3D dragon driven by real agent events |
+| 6. 3D ice dragon companion | Done | Rigged Blender dragon beside the chat, driven only by real agent events |
 
 ## Features
 
@@ -64,7 +64,7 @@ MCP server.
 - **Activity feed**: lists real operations only (searches, reads, edits, commands, analysis,
   approvals), each with a timestamp, status, duration, and details.
 - **Dragon events**: `dragon.idle`, `thinking`, `reading`, `editing`, `running`, `waiting`, `error`,
-  and `success`. They drive the status indicator now and will drive the Phase 5 dragon later.
+  and `success`. They drive the status bar indicator. (The 3D dragon follows `agent.*` events directly.)
 
 ### Agent (Phase 3)
 - **Agent loop** (`src/agent/runtime/`): observe → ask the model for the next action → validate →
@@ -388,19 +388,27 @@ None. The agent engine uses only what Phases 1 and 2 already brought in.
   console, that scan briefly opens terminal windows; Ollama's own tray app does the same. Starting
   Ollama from Vinnie no longer opens windows for every model load (Phase 4 fix).
 
-## Recommended Phase 5 plan (ice dragon viewer)
+## Ice dragon companion (Phase 6)
 
-1. **Event contract first**: freeze the dragon state machine on the existing event buses
-   (`agent.*`, `mcp.*`, `skill.*`, and the dragon states idle, thinking, reading, editing,
-   running, waiting, working, error, success) and add a small replay log, so animations can be
-   built and tested without a model.
-2. **Renderer**: a lazily loaded Three.js (or Babylon.js) canvas in its own panel, with a glTF ice
-   dragon model, a fixed animation budget, and `prefers-reduced-motion` support. It must not slow
-   down chat or the agent loop; pause it when hidden.
-3. **State-to-animation mapping**: idle breathing; thinking glow; reading (eyes scanning); editing
-   (frost forming); running commands (wing beats); waiting for approval (looking at the user);
-   errors and success with short one-shot animations, debounced so rapid events don't flicker.
-4. **Integration cues**: subtle effects for MCP connections and skill activations, driven only by
-   real events and never invented ones.
-5. **Settings and tests**: on/off, quality level, and size; visual regression snapshots of each
-   state; a performance test that keeps frame time and CPU use bounded during long agent tasks.
+The ice dragon modelled in Blender (`vinnie-blender-model/vinnie-dragon/`) is exported as glTF to
+`public/models/vinnie_dragon.glb` and shown in a panel beside the chat (toolbar snowflake button).
+
+- **Single source of truth**: `src/dragon/eventAdapter.ts` subscribes to the existing `agent.*` events and maps
+  each task status to a behavior (idle, thinking, planning, executing, waiting for permission, verifying, paused,
+  completed, failed, cancelled). It never emits events, calls the runtime, or runs tools; the dragon has no model.
+- **Activity panel**: current task, the runtime's own activity label, the tool running or awaiting approval, the
+  agent state, and the last 8 events.
+- **Rendering** (`src/dragon/engine/`): `DragonController` (renderer, camera, loop, failure handling),
+  `DragonAnimationManager` (the model's `Idle_Breathe`, `Blink`, and `Wings_Fold` clips, split per body part, plus
+  small procedural head, neck, tail, jaw, and wing rotations), and `DragonEnvironment` (lights, fog, snow, ice
+  glints, floor, shadows, optional mirror floor). three.js loads lazily, only when the dragon is shown.
+- **Performance**: Low/Medium/High presets (frame-rate cap 30/45/60, resolution, shadows, particle counts,
+  reflections), lower frame rate while resting, rendering paused when hidden, GPU resources freed on close, and the
+  parsed model cached for reopening.
+- **Failures**: a missing or invalid model, WebGL errors, and context loss show a message with Retry; Vinnie keeps
+  working. After a context restore the viewer rebuilds itself.
+- **Settings**: a `dragon` section in the existing settings document (Rust `DragonSettings`, values clamped rather
+  than rejected), editable in the viewer or under **Settings → Ice dragon**.
+- **Tests**: unit tests for the mapping, adapter, poses, model checks, and animation manager; a test that runs the
+  real `AgentRuntime` and checks the dragon's state after every event; UI tests for the panel and layout.
+
