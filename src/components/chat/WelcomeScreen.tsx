@@ -2,13 +2,13 @@ import { FolderOpen, RefreshCw, Settings as SettingsIcon } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { LaunchOllamaButton } from "@/components/common/LaunchOllamaButton";
 import { ErrorNotice } from "@/components/common/ErrorNotice";
+import { DragonInvite } from "@/components/dragon/DragonInvite";
 import { Logo } from "@/components/common/Logo";
 import { Spinner } from "@/components/common/Spinner";
 import { useConnectionStore } from "@/state/connectionStore";
 import { useProjectStore } from "@/state/projectStore";
 import { useSettingsStore } from "@/state/settingsStore";
 import { useUiStore } from "@/state/uiStore";
-import { DragonPlaceholder } from "./DragonPlaceholder";
 import { NoModelsNotice } from "./NoModelsNotice";
 
 const PROJECT_SUGGESTIONS = [
@@ -136,7 +136,7 @@ export function WelcomeScreen() {
             change is shown as a diff and can be reverted.
           </p>
         )}
-        <DragonPlaceholder />
+        <DragonInvite />
       </div>
     </div>
   );

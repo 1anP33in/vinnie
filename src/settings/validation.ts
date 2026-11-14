@@ -1,7 +1,7 @@
 // Client-side mirror of the backend settings validation, used for instant
 // feedback. The backend remains authoritative.
 
-import type { Settings } from "@/lib/ipc/types";
+import type { DragonSettings, Settings } from "@/lib/ipc/types";
 
 export const DEFAULT_ENDPOINT = "http://localhost:11434";
 
@@ -17,6 +17,22 @@ export const DEFAULT_IGNORED_DIRECTORIES = [
   "__pycache__",
   "target",
 ];
+
+export const DEFAULT_DRAGON_SETTINGS: DragonSettings = {
+  enabled: true,
+  panelOpen: true,
+  layout: "side",
+  panelSize: 30,
+  quality: "medium",
+  snow: true,
+  iceParticles: true,
+  fog: true,
+  lightingEffects: true,
+  animationSpeed: 100,
+  idleAnimations: true,
+  followCursor: true,
+  camera: { azimuthDeg: 28, elevationDeg: 14, distancePct: 100 },
+};
 
 export const DEFAULT_SETTINGS: Settings = {
   ollamaEndpoint: DEFAULT_ENDPOINT,
@@ -42,6 +58,7 @@ export const DEFAULT_SETTINGS: Settings = {
     autoVerify: true,
     debugView: false,
   },
+  dragon: DEFAULT_DRAGON_SETTINGS,
 };
 
 export type SettingsErrors = Partial<Record<keyof Settings, string>>;

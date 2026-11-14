@@ -25,7 +25,12 @@ Open Settings with <kbd>Ctrl</kbd>+<kbd>,</kbd> or the gear icon. Changes take e
 | --- | --- | --- |
 | Theme | Dark | Dark, Light, or System |
 | Show model reasoning | On | Shows the reasoning panel for thinking models |
-| Reduce visual effects | Off | Turns off glow, frost, and animations |
+| Reduce visual effects | Off | Turns off glow, frost, and animations, and quiets the 3D dragon |
+
+## Ice dragon
+
+Show or hide the 3D dragon, and set its layout, graphics quality, effects, idle animations, cursor following, and
+animation speed. See [Animation settings](/dragon/animation-settings/).
 
 ## Startup
 

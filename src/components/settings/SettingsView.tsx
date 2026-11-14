@@ -7,7 +7,16 @@ import { ErrorNotice } from "@/components/common/ErrorNotice";
 import { Spinner } from "@/components/common/Spinner";
 import { PROJECT_STATUS_TEXT } from "@/project/status";
 import { describeError, toVinnieError, type VinnieError } from "@/lib/errors";
-import type { AppInfo, ConnectionInfo, ModelInfo, Settings, StartupBehavior, Theme } from "@/lib/ipc/types";
+import type {
+  AppInfo,
+  ConnectionInfo,
+  DragonLayout,
+  DragonQuality,
+  ModelInfo,
+  Settings,
+  StartupBehavior,
+  Theme,
+} from "@/lib/ipc/types";
 import { getServices } from "@/services";
 import { DEFAULT_ENDPOINT, validateSettings, type SettingsErrors } from "@/settings/validation";
 import { useConnectionStore } from "@/state/connectionStore";
@@ -195,6 +204,7 @@ export function SettingsView() {
   };
 
   const updateAgent = (patch: Partial<Settings["agent"]>) => update("agent", { ...draft.agent, ...patch });
+  const updateDragon = (patch: Partial<Settings["dragon"]>) => update("dragon", { ...draft.dragon, ...patch });
 
   const models = draftModels ?? connection.models;
   const defaultModelMissing = !!draft.defaultModel && !models.some((m) => m.name === draft.defaultModel);
@@ -402,6 +412,88 @@ export function SettingsView() {
               checked={draft.showReasoning}
               onChange={(v) => update("showReasoning", v)}
             />
+          </Section>
+
+          <Section
+            title="Ice dragon"
+            description="Vinnie's 3D companion. It reacts only to what the agent is actually doing."
+          >
+            <Toggle
+              label="Show the ice dragon"
+              description="Off: no 3D viewer is loaded. The status bar indicator remains."
+              checked={draft.dragon.enabled}
+              onChange={(v) => updateDragon({ enabled: v, panelOpen: v ? true : draft.dragon.panelOpen })}
+            />
+            {draft.dragon.enabled && (
+              <>
+                <Field label="Graphics quality" hint="Low: no shadows, fewer particles, 30 fps. High: reflections and glass-like ice, up to 60 fps.">
+                  <Segmented<DragonQuality>
+                    label="Graphics quality"
+                    value={draft.dragon.quality}
+                    onChange={(v) => updateDragon({ quality: v })}
+                    options={[
+                      { value: "low", label: "Low" },
+                      { value: "medium", label: "Medium" },
+                      { value: "high", label: "High" },
+                    ]}
+                  />
+                </Field>
+                <Field label="Layout">
+                  <Segmented<DragonLayout>
+                    label="Dragon layout"
+                    value={draft.dragon.layout}
+                    onChange={(v) => updateDragon({ layout: v })}
+                    options={[
+                      { value: "side", label: "Side panel" },
+                      { value: "compact", label: "Compact strip above the chat" },
+                    ]}
+                  />
+                </Field>
+                <Toggle
+                  label="Snow"
+                  description="Falling snow around the dragon."
+                  checked={draft.dragon.snow}
+                  onChange={(v) => updateDragon({ snow: v })}
+                />
+                <Toggle
+                  label="Ice sparkles"
+                  description="Occasional glints of ice in the air."
+                  checked={draft.dragon.iceParticles}
+                  onChange={(v) => updateDragon({ iceParticles: v })}
+                />
+                <Toggle label="Fog" description="Soft fog in the distance." checked={draft.dragon.fog} onChange={(v) => updateDragon({ fog: v })} />
+                <Toggle
+                  label="Lighting effects"
+                  description="Cyan glow, rim lights, floor reflections (High), and shadows."
+                  checked={draft.dragon.lightingEffects}
+                  onChange={(v) => updateDragon({ lightingEffects: v })}
+                />
+                <Toggle
+                  label="Idle animations"
+                  description="Breathing, blinking, and looking around while Vinnie is idle."
+                  checked={draft.dragon.idleAnimations}
+                  onChange={(v) => updateDragon({ idleAnimations: v })}
+                />
+                <Toggle
+                  label="Follow the cursor"
+                  description="While idle, the dragon glances toward the mouse pointer."
+                  checked={draft.dragon.followCursor}
+                  onChange={(v) => updateDragon({ followCursor: v })}
+                />
+                <Field label={`Animation speed: ${draft.dragon.animationSpeed}%`} htmlFor="dragon-speed">
+                  <input
+                    id="dragon-speed"
+                    type="range"
+                    min={25}
+                    max={200}
+                    step={25}
+                    value={draft.dragon.animationSpeed}
+                    onChange={(e) => updateDragon({ animationSpeed: Number(e.target.value) })}
+                    className="w-64 accent-[var(--accent-strong)]"
+                  />
+                </Field>
+              </>
+            )}
           </Section>
 
           <Section title="Startup">

@@ -16,6 +16,19 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    title: "Phase 6: 3D ice dragon companion",
+    date: "2026-11-14",
+    version: "0.1.0",
+    summary: "The rigged ice dragon now lives beside the chat and reacts to what the agent is actually doing.",
+    highlights: [
+      "The Blender-built dragon (glTF, 70-bone rig, baked textures) in a dark, icy three.js scene",
+      "Postures for every agent state, driven only by the runtime's own events",
+      "Activity panel with the current task, activity, tool, and recent events",
+      "Graphics quality presets, effect toggles, and settings saved with Vinnie's other settings",
+    ],
+    href: "/dragon/introduction/",
+  },
+  {
     title: "Phase 4: MCP integration and skills",
     date: "2026-11-09",
     version: "0.1.0",

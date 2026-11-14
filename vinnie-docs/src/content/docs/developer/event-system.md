@@ -8,7 +8,7 @@ Vinnie has four small in-process event buses. All events come from real operatio
 
 | Bus | File | Events | Consumers |
 | --- | --- | --- | --- |
-| Agent | `src/agent/runtime/events.ts` | `agent.*` (21 types, see [Agent states](/agent-system/agent-states/)) | Agent store, activity bridge, dragon bridge, tool usage counters |
+| Agent | `src/agent/runtime/events.ts` | `agent.*` (21 types, see [Agent states](/agent-system/agent-states/)) | Agent store, activity bridge, dragon bridge, 3D dragon adapter (`src/dragon/eventAdapter.ts`), tool usage counters |
 | MCP and skills | `src/mcp/events.ts` | `mcp.server_connecting`, `mcp.server_connected`, `mcp.server_disconnected`, `mcp.server_error`, `mcp.tool_discovered`, `mcp.tool_rejected`, `mcp.tool_started`, `mcp.tool_completed`, `mcp.tool_failed`, `skill.discovered`, `skill.activated`, `skill.deactivated`, `skill.loaded`, `skill.failed` | Activity feed |
 | Dragon | `src/agent/events.ts` | `dragon.<state>` for 9 states | Dragon store → status indicator |
 | Activity | `src/state/activityStore.ts` | Activity entries (start/finish) | Activity panel, dragon |
